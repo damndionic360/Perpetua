@@ -1049,39 +1049,39 @@ end
 
 local welcome = {}
 
-local function infoCard(parent, iconName, title)
+local function infoCard(parent, iconName, title, height)
   local card = CreateFrame("Frame", nil, parent)
   T.panel(card)
+  card:SetHeight(height)
   local icon = T.icon(card, "Interface\\Icons\\" .. iconName, 26)
   icon:SetPoint("TOPLEFT", 14, -14)
   local h = T.text(card, "heading"); h:SetPoint("LEFT", icon, "RIGHT", 12, 0); h:SetText(title:upper())
+  -- Fixed box: the text wraps inside the card instead of the card measuring the text (GetStringHeight reported one
+  -- line before the width resolved, so the cards came out too short and the text ran over the next one).
   card.body = card:CreateFontString(nil, "OVERLAY")
   card.body:SetFontObject(T.fonts.small)
   card.body:SetJustifyH("LEFT"); card.body:SetJustifyV("TOP"); card.body:SetWordWrap(true); card.body:SetSpacing(2)
-  card.body:SetPoint("TOPLEFT", 16, -50); card.body:SetPoint("RIGHT", -16, 0)
-  function card:Fit(extra)
-    card:SetHeight(math.ceil((card.body:GetStringHeight() or 40) + 64 + (extra or 0)))
-  end
+  card.body:SetPoint("TOPLEFT", 16, -50); card.body:SetPoint("BOTTOMRIGHT", -16, 10)
   return card
 end
 
 local WELCOME_W = 452
 
 local function buildWelcome(page)
-  -- The cards are as tall as their wrapped text, so they sit in a scroll frame: if they ever outgrow the page they
-  -- scroll (renderWelcome shows the bar) instead of running off the bottom of the window.
-  local scroll = CreateFrame("ScrollFrame", nil, page, "UIPanelScrollFrameTemplate")
-  scroll:SetPoint("TOPLEFT"); scroll:SetPoint("BOTTOMLEFT"); scroll:SetWidth(WELCOME_W)
-  scroll.scrollBarHideable = true
-  local left = CreateFrame("Frame", nil, scroll)
-  left:SetSize(WELCOME_W, 1)
-  scroll:SetScrollChild(left)
-  welcome.scroll, welcome.left = scroll, left
+  -- Three static cards, stacked with fixed heights (roomier than the text needs; 494px of the page's ~528).
+  local left = CreateFrame("Frame", nil, page)
+  left:SetPoint("TOPLEFT"); left:SetPoint("BOTTOMLEFT"); left:SetWidth(WELCOME_W)
   welcome.cards = {
-    infoCard(left, "INV_BannerPVP_02", "Who we are"),
-    infoCard(left, "INV_Misc_Note_01", "We're recruiting"),
-    infoCard(left, "INV_Misc_Book_09", "About this addon"),
+    infoCard(left, "INV_BannerPVP_02", "Who we are", 150),
+    infoCard(left, "INV_Misc_Note_01", "We're recruiting", 150),
+    infoCard(left, "INV_Misc_Book_09", "About this addon", 170),
   }
+  local prev
+  for _, card in ipairs(welcome.cards) do
+    if prev then card:SetPoint("TOPLEFT", prev, "BOTTOMLEFT", 0, -12) else card:SetPoint("TOPLEFT") end
+    card:SetPoint("RIGHT", left, "RIGHT")
+    prev = card
+  end
   welcome.cards[1].body:SetText("An " .. color(T.HEX.pale, "Alliance") .. " guild on the " .. color(T.HEX.pale, "PvP")
     .. " ruleset for World of Warcraft: Forever, and a community that has been gaming together for over eight years. "
     .. "People come first: we have a strong PvE and PvP presence, but you don't need to be hardcore to belong here.")
@@ -1120,27 +1120,7 @@ local function buildWelcome(page)
   welcome.detail:SetPoint("TOPLEFT", welcome.state, "BOTTOMLEFT", 0, -8); welcome.detail:SetPoint("RIGHT", -16, 0)
 end
 
-local function layoutWelcome(width)
-  welcome.scroll:SetWidth(width); welcome.left:SetWidth(width)
-  local y = 0
-  for _, card in ipairs(welcome.cards) do
-    card:ClearAllPoints()
-    card:SetPoint("TOPLEFT", 0, -y); card:SetPoint("RIGHT", 0, 0)
-    card:Fit()
-    y = y + card:GetHeight() + 12
-  end
-  return y - 12
-end
-
 local function renderWelcome()
-  local room = welcome.scroll:GetHeight() or 0
-  local total = layoutWelcome(WELCOME_W)
-  local over = room > 0 and total > room
-  if over then total = layoutWelcome(WELCOME_W - 24) end -- leave room for the scroll bar
-  welcome.left:SetHeight(total)
-  local bar = welcome.scroll.ScrollBar
-  if type(bar) == "table" then bar:SetShown(over) end
-  if not over then welcome.scroll:SetVerticalScroll(0) end
   local guild = IsInGuild() and ns.guildName()
   local horde = try(UnitFactionGroup, "player") == "Horde"
   welcome.state:SetText(guild and ("IN <" .. safe(guild):upper() .. ">") or "NOT IN A GUILD")

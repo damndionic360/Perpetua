@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.8.2
+
+### Fixes
+- The **Welcome** page's three cards (Who we are, We're recruiting, About this addon) now always show their full text. They were coming out too short, so the text ran over the next card.
+
 ## 2.8.1
 
 ### Changes
