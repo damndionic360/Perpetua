@@ -1,0 +1,23 @@
+## Interface: 16001
+## Title: |cffd4af37Perpetua|r
+## Notes: Your guild's gear, talents, professions and attunements, shared between everyone with the addon, and your profile export for perpetua.gg. Type /ppta (or /perpetua).
+## Author: Perpetua
+## Version: 2.8.0
+## SavedVariables: PerpetuaDB
+## SavedVariablesPerCharacter: PerpetuaCharDB
+## AddonCompartmentFunc: Perpetua_Toggle
+## IconTexture: Interface\AddOns\Perpetua\Media\icon
+## Category: Guild
+
+Util.lua
+Data.lua
+SiteData.lua
+Theme.lua
+Collect.lua
+Comm.lua
+Calendar.lua
+Loot.lua
+Forums.lua
+UI.lua
+Minimap.lua
+Core.lua

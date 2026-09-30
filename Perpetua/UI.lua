@@ -1,0 +1,1369 @@
+-- The Perpetua window (/perpetua): Guild, Character, Attunements, Crafters and Export tabs, all read from
+-- what guild sync has collected (ns.players()). Styled after the site by Theme.lua; the only Blizzard
+-- templates used are the scroll frame and the checkbox.
+local _, ns = ...
+local safe, try, T = ns.safe, ns.try, ns.T
+
+local READY = "|TInterface\\RaidFrame\\ReadyCheck-Ready:15|t"
+local NOT_READY = "|cff4a5270—|r"
+local ROW_H = 26
+
+local main, tabs, pages, current = nil, {}, {}, nil
+ns.selected = nil -- name shown in the Character tab
+
+local function color(hex, s) return "|cff" .. hex .. s .. "|r" end
+local function classed(name, classFile) return color(ns.classColor(classFile), safe(name)) end
+
+-- All players this guild has heard from, merged with the guild roster when asked (members without the addon).
+local function everyone(includeRoster)
+  local list, byName = {}, {}
+  for name, rec in pairs(ns.players()) do
+    if type(rec) == "table" then
+      local row = { name = name, rec = rec, profile = rec.profile, class = rec.class, level = rec.level }
+      list[#list + 1] = row
+      byName[name] = row
+    end
+  end
+  if includeRoster and GetNumGuildMembers then
+    for i = 1, (try(GetNumGuildMembers) or 0) do
+      local full, _, _, level, _, _, _, _, online, _, classFile = try(GetGuildRosterInfo, i)
+      local name = ns.playerKey(full)
+      if name and not byName[name] then
+        list[#list + 1] = { name = name, class = classFile, level = level, online = online, noAddon = true }
+      end
+    end
+  end
+  return list
+end
+
+-- ---------- list widget ----------
+-- cols = { { title, width, justify } }; rows = { { cells = {...}, onClick = fn, onEnter = fn } }
+
+local function List(parent, cols, onSort)
+  local L = { rows = {}, cols = cols }
+  local header = CreateFrame("Frame", nil, parent)
+  header:SetPoint("TOPLEFT", 0, 0)
+  header:SetPoint("TOPRIGHT", -26, 0)
+  header:SetHeight(22)
+  local underline = T.fill(header, "ARTWORK", T.C.gold, 0.25)
+  underline:SetHeight(1)
+  underline:SetPoint("BOTTOMLEFT"); underline:SetPoint("BOTTOMRIGHT")
+  local x = 8
+  for i, c in ipairs(cols) do
+    local h = CreateFrame("Button", nil, header)
+    h:SetPoint("LEFT", x, 0)
+    h:SetSize(c[2], 22)
+    local fs = T.text(h, "label", c[3])
+    fs:SetAllPoints()
+    fs:SetText(c[1]:upper())
+    h.label = fs
+    if onSort then
+      h:SetScript("OnClick", function() onSort(i) end)
+      h:SetScript("OnEnter", function() fs:SetTextColor(T.C.pale[1], T.C.pale[2], T.C.pale[3]) end)
+      h:SetScript("OnLeave", function() fs:SetTextColor(T.C.gold[1], T.C.gold[2], T.C.gold[3]) end)
+    end
+    c.header = h
+    x = x + c[2] + 8
+  end
+  L.header = header
+
+  local scroll = CreateFrame("ScrollFrame", nil, parent, "UIPanelScrollFrameTemplate")
+  scroll:SetPoint("TOPLEFT", 0, -24)
+  scroll:SetPoint("BOTTOMRIGHT", -26, 0)
+  local child = CreateFrame("Frame", nil, scroll)
+  child:SetSize(x, 1)
+  scroll:SetScrollChild(child)
+  L.child = child
+
+  local function row(i)
+    if L.rows[i] then return L.rows[i] end
+    local r = CreateFrame("Button", nil, child)
+    r:SetHeight(ROW_H)
+    r:SetPoint("TOPLEFT", 0, -(i - 1) * ROW_H)
+    r:SetPoint("RIGHT", child, "RIGHT")
+    -- Thin separators instead of stripes; a soft gold wash on hover.
+    local sep = T.fill(r, "BACKGROUND", T.C.gold, 0.08)
+    sep:SetHeight(1); sep:SetPoint("BOTTOMLEFT"); sep:SetPoint("BOTTOMRIGHT")
+    local hl = T.fill(r, "HIGHLIGHT", T.C.gold, 0.1)
+    hl:SetAllPoints()
+    r.cells = {}
+    local cx = 8
+    for c, col in ipairs(cols) do
+      local fs = T.text(r, "small", col[3])
+      fs:SetPoint("LEFT", cx, 0)
+      fs:SetWidth(col[2])
+      r.cells[c] = fs
+      cx = cx + col[2] + 8
+    end
+    r:SetScript("OnClick", function(self) if self.data and self.data.onClick then self.data.onClick(self.data) end end)
+    r:SetScript("OnEnter", function(self) if self.data and self.data.onEnter then self.data.onEnter(self, self.data) end end)
+    r:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    L.rows[i] = r
+    return r
+  end
+
+  function L:SetRows(data)
+    child:SetWidth(math.max(scroll:GetWidth() or 0, 1))
+    for i, d in ipairs(data) do
+      local r = row(i)
+      r.data = d
+      for c = 1, #cols do r.cells[c]:SetText(d.cells[c] or "") end
+      r:Show()
+    end
+    for i = #data + 1, #L.rows do L.rows[i]:Hide(); L.rows[i].data = nil end
+    child:SetHeight(math.max(1, #data * ROW_H))
+  end
+  return L
+end
+
+-- ---------- text canvas (Character tab) ----------
+-- Two scrolling columns of lines; item lines are buttons with the item's tooltip.
+
+local LINE_H = { name = 30, heading = 26, body = 21, small = 21, muted = 19 }
+
+local function Canvas(parent, layout)
+  local C = { lines = {}, rules = {}, used = 0, usedRules = 0, y = { 0, 0 }, col = 1 }
+  local scroll = CreateFrame("ScrollFrame", nil, parent, "UIPanelScrollFrameTemplate")
+  scroll:SetPoint("TOPLEFT", 0, 0)
+  scroll:SetPoint("BOTTOMRIGHT", -26, 0)
+  local child = CreateFrame("Frame", nil, scroll)
+  child:SetSize(layout and layout.width or 780, 1)
+  scroll:SetScrollChild(child)
+  local COL_X, COL_W = layout and layout.x or { 6, 386 }, layout and layout.w or 356
+
+  function C:Reset()
+    for _, l in ipairs(self.lines) do l:Hide(); l.link = nil; l.onClick = nil end
+    for _, r in ipairs(self.rules) do r:Hide() end
+    for _, f in ipairs(self.paras or {}) do f:Hide() end
+    self.used, self.usedRules, self.usedParas, self.y, self.col = 0, 0, 0, { 0, 0 }, 1
+    scroll:SetVerticalScroll(0)
+  end
+  function C:Col(n) self.col = n end
+  function C:Gap(h) self.y[self.col] = self.y[self.col] + (h or 10) end
+  -- text, font key (Theme fonts), link (hyperlink for the tooltip), indent
+  function C:Line(text, fontKey, link, indent)
+    fontKey = fontKey or "body"
+    self.used = self.used + 1
+    local l = self.lines[self.used]
+    if not l then
+      l = CreateFrame("Button", nil, child)
+      l.fs = T.text(l, "body")
+      l.fs:SetAllPoints()
+      l:SetScript("OnEnter", function(b)
+        if not b.link then return end
+        GameTooltip:SetOwner(b, "ANCHOR_RIGHT")
+        pcall(GameTooltip.SetHyperlink, GameTooltip, b.link)
+        GameTooltip:Show()
+      end)
+      l:SetScript("OnLeave", function() GameTooltip:Hide() end)
+      l:SetScript("OnClick", function(b) if b.onClick then b.onClick() end end)
+      self.lines[self.used] = l
+    end
+    l.fs:SetFontObject(T.fonts[fontKey])
+    l.fs:SetWordWrap(false)
+    l.fs:SetText(text)
+    local h = LINE_H[fontKey] or 20
+    local col = self.col
+    l:ClearAllPoints()
+    l:SetPoint("TOPLEFT", COL_X[col] + (indent or 0), -self.y[col])
+    l:SetSize(COL_W - (indent or 0), h)
+    l.link = link
+    l.onClick = nil
+    l:Show()
+    self.y[col] = self.y[col] + h
+    child:SetHeight(math.max(self.y[1], self.y[2]) + 10)
+    return l
+  end
+  -- Wrapped text (forum posts). Each paragraph gets a font string anchored only at its top and sides, so WoW
+  -- lays out every line and GetStringHeight reports the real height (a fixed-height box would clip it).
+  C.paras, C.usedParas = {}, 0
+  function C:Para(text, fontKey, indent)
+    self.usedParas = self.usedParas + 1
+    local fs = self.paras[self.usedParas]
+    if not fs then
+      fs = child:CreateFontString(nil, "OVERLAY")
+      fs:SetJustifyH("LEFT")
+      fs:SetJustifyV("TOP")
+      fs:SetWordWrap(true)
+      self.paras[self.usedParas] = fs
+    end
+    local col = self.col
+    fs:SetFontObject(T.fonts[fontKey or "body"])
+    fs:ClearAllPoints()
+    fs:SetPoint("TOPLEFT", COL_X[col] + (indent or 0), -self.y[col])
+    fs:SetWidth(COL_W - (indent or 0))
+    fs:SetText(text)
+    fs:Show()
+    local h = math.max(LINE_H[fontKey or "body"] or 20, math.ceil((fs:GetStringHeight() or 16) + 6))
+    self.y[col] = self.y[col] + h
+    child:SetHeight(math.max(self.y[1], self.y[2]) + 10)
+    return fs
+  end
+  -- A line you can click (opens the copy box for a site address).
+  function C:Action(text, onClick, fontKey, indent)
+    local l = self:Line(color(T.HEX.warm, text), fontKey or "small", nil, indent)
+    l.onClick = onClick
+    return l
+  end
+  -- Section heading: Cinzel caps over a faint gold hairline.
+  function C:Heading(text)
+    if self.y[self.col] > 0 then self:Gap(12) end
+    self:Line(text:upper(), "heading")
+    self.usedRules = self.usedRules + 1
+    local r = self.rules[self.usedRules]
+    if not r then r = T.fill(child, "ARTWORK", T.C.gold, 0.3); r:SetHeight(1); self.rules[self.usedRules] = r end
+    r:ClearAllPoints()
+    r:SetPoint("TOPLEFT", COL_X[self.col], -(self.y[self.col] - 2))
+    r:SetWidth(COL_W - 10)
+    r:Show()
+    self:Gap(4)
+  end
+  return C
+end
+
+-- ---------- Guild tab ----------
+
+local guild = { sort = 2, desc = true, filter = "", roster = false, onlineOnly = false, alts = false }
+
+local function professionsText(p)
+  local out = {}
+  for _, x in ipairs(p and p.profs or {}) do
+    if x.p == 1 then out[#out + 1] = safe(x.n) .. (x.r and color(T.HEX.muted, " " .. x.r) or "") end
+  end
+  return table.concat(out, ", ")
+end
+
+local function raidsText(p)
+  local out = {}
+  for _, a in ipairs(ns.ATTUNEMENTS) do
+    if a.group == "Raids" and ns.attuned(p, a) then out[#out + 1] = a.short end
+  end
+  return color(T.HEX.gold, table.concat(out, " "))
+end
+
+-- Who's online right now, from the guild roster.
+local function onlineNow()
+  local online = {}
+  for i = 1, (try(GetNumGuildMembers) or 0) do
+    local full, _, _, _, _, _, _, _, isOnline = try(GetGuildRosterInfo, i)
+    local name = ns.playerKey(ns.readable(full))
+    if name and ns.readable(isOnline) then online[name] = true end
+  end
+  if ns.selfName then online[ns.selfName] = true end
+  return online
+end
+
+-- Characters grouped by WoW account: every profile lists the account's other characters (PerpetuaDB.account on
+-- theirs), so anyone linked by those lists is one person. Returns name -> group (a shared table of names).
+local function accountGroups(names)
+  local parent = {}
+  local function find(x)
+    while parent[x] and parent[x] ~= x do x = parent[x] end
+    return x
+  end
+  local function union(a, b)
+    parent[a] = parent[a] or a
+    parent[b] = parent[b] or b
+    local ra, rb = find(a), find(b)
+    if ra ~= rb then parent[rb] = ra end
+  end
+  for _, name in ipairs(names) do
+    parent[name] = parent[name] or name
+    local rec = ns.players()[name]
+    for _, alt in ipairs(rec and rec.profile and rec.profile.alts or {}) do
+      if alt.n then union(name, ns.fullName(alt.n, alt.s)) end
+    end
+  end
+  for alt in pairs(PerpetuaDB.account or {}) do if ns.selfName then union(ns.selfName, alt) end end
+  local groups, out = {}, {}
+  for _, name in ipairs(names) do
+    local root = find(name)
+    groups[root] = groups[root] or {}
+    table.insert(groups[root], name)
+    out[name] = groups[root]
+  end
+  return out
+end
+
+local function buildGuild(page)
+  local search = T.searchBox(page, 240, "Search names, specs, professions…", function(t) guild.filter = t:lower(); ns.refreshUI() end)
+  search:SetPoint("TOPLEFT", 2, 0)
+  -- Filters, right to left.
+  local function toggle(label, key, after)
+    local check = CreateFrame("CheckButton", nil, page, "UICheckButtonTemplate")
+    check:SetSize(24, 24)
+    local text = T.text(page, "muted")
+    text:SetText(label)
+    check:SetScript("OnClick", function(self)
+      guild[key] = self:GetChecked() and true or false
+      if after then after() end
+      ns.refreshUI()
+    end)
+    return check, text
+  end
+  local askRoster = function() try(C_GuildInfo and C_GuildInfo.GuildRoster or GuildRoster) end
+  local c3, t3 = toggle("Without the addon", "roster", askRoster)
+  local c2, t2 = toggle("Alts separately", "alts")
+  local c1, t1 = toggle("Online now", "onlineOnly", askRoster)
+  t3:SetPoint("TOPRIGHT", -26, -5); c3:SetPoint("RIGHT", t3, "LEFT", -2, 0)
+  t2:SetPoint("RIGHT", c3, "LEFT", -12, 0); c2:SetPoint("RIGHT", t2, "LEFT", -2, 0)
+  t1:SetPoint("RIGHT", c2, "LEFT", -12, 0); c1:SetPoint("RIGHT", t1, "LEFT", -2, 0)
+
+  local area = CreateFrame("Frame", nil, page)
+  area:SetPoint("TOPLEFT", 0, -38)
+  area:SetPoint("BOTTOMRIGHT")
+  guild.list = List(area, {
+    { "Name", 190 }, { "Lvl", 30, "RIGHT" }, { "Spec", 130 }, { "iLvl", 34, "RIGHT" },
+    { "Professions", 150 }, { "Raids", 80 }, { "Updated", 66, "RIGHT" },
+  }, function(i)
+    if guild.sort == i then guild.desc = not guild.desc else guild.sort, guild.desc = i, i == 2 or i == 4 end
+    ns.refreshUI()
+  end)
+end
+
+local function renderGuild()
+  local online = onlineNow()
+  local all = everyone(guild.roster)
+  local byName, names = {}, {}
+  for _, e in ipairs(all) do byName[e.name] = e; names[#names + 1] = e.name end
+  local groups = accountGroups(names)
+
+  -- One row per person: the character they're on now, else the one heard from most recently.
+  local shown = {}
+  local function score(e)
+    if online[e.name] then return 2e10 end
+    return (e.rec and math.max(e.rec.pt or 0, e.rec.rt or 0, e.rec.heard or 0)) or (e.noAddon and 0) or 1
+  end
+  for _, e in ipairs(all) do
+    local group = groups[e.name]
+    if guild.alts or #group == 1 then
+      shown[#shown + 1] = { e = e, others = {} }
+    else
+      local best = e
+      for _, n in ipairs(group) do if byName[n] and score(byName[n]) > score(best) then best = byName[n] end end
+      if best == e then
+        local others = {}
+        for _, n in ipairs(group) do if n ~= e.name then others[#others + 1] = n end end
+        shown[#shown + 1] = { e = e, others = others }
+      end
+    end
+  end
+
+  local rows = {}
+  for _, row in ipairs(shown) do
+    local e = row.e
+    local p = e.profile
+    local spec = p and p.spec and p.spec.n
+    local cls = p and p.char and p.char.class
+    -- Older addons sent Forever's class-named spec ("Warlock"): show just the class then.
+    if spec and cls and spec == cls then spec = nil end
+    local specText = (spec and cls) and (safe(spec) .. " " .. safe(cls)) or cls and safe(cls) or ""
+    local profs = professionsText(p)
+    local searchText = (e.name .. " " .. table.concat(row.others, " ") .. " " .. specText .. " " .. profs):lower()
+    local isOnline = online[e.name]
+    if (guild.filter == "" or searchText:find(guild.filter, 1, true)) and (not guild.onlineOnly or isOnline) then
+      local ilvl = ns.avgItemLevel(p)
+      local stamp = e.rec and math.max(e.rec.pt or 0, e.rec.rt or 0)
+      local updated = isOnline and color(T.HEX.ok, "online")
+        or e.noAddon and color("5a6380", "no addon")
+        or (e.rec and not e.profile and e.rec.addon and ns.newer(ns.VERSION, e.rec.addon)) and color(T.HEX.warm, "old addon")
+        or e.rec and color(T.HEX.muted, ns.ago(stamp and stamp > 0 and stamp or e.rec.heard)) or ""
+      local extra = #row.others > 0 and color(T.HEX.muted, "  +" .. #row.others) or ""
+      rows[#rows + 1] = {
+        key = { e.name:lower(), e.level or 0, specText:lower(), ilvl or 0, profs:lower(), raidsText(p), isOnline and -1e11 or -(stamp or 0) },
+        cells = { T.classIcon(e.class) .. classed(e.name, e.class) .. extra, e.level or "", specText, ilvl or "", profs, raidsText(p), updated },
+        onClick = (not e.noAddon) and function() ns.selected = e.name; ns.showTab("Character") end or nil,
+        onEnter = #row.others > 0 and function(r)
+          GameTooltip:SetOwner(r, "ANCHOR_RIGHT")
+          GameTooltip:AddLine("Also plays", T.C.gold[1], T.C.gold[2], T.C.gold[3])
+          for _, n in ipairs(row.others) do
+            local o = byName[n]
+            local oc = o and o.profile and o.profile.char
+            GameTooltip:AddDoubleLine(T.classIcon(o and o.class) .. classed(n, o and o.class),
+              (oc and oc.level and ("Level " .. oc.level) or "") .. (online[n] and "  online" or ""), 1, 1, 1, 0.64, 0.67, 0.79)
+          end
+          GameTooltip:Show()
+        end or nil,
+      }
+    end
+  end
+  local k, desc = guild.sort, guild.desc
+  table.sort(rows, function(a, b)
+    local x, y = a.key[k], b.key[k]
+    if x == y then return a.key[1] < b.key[1] end
+    if desc then return x > y end
+    return x < y
+  end)
+  ns.lastGuildRows = rows -- for the test harness
+  guild.list:SetRows(rows)
+end
+
+-- ---------- Character tab ----------
+
+local char = {}
+
+-- The Character page: a header block (class crest, name, level and spec, guild and freshness, a button to the
+-- site), then gear and stats on the left, talents, professions, attunements and reputation on the right.
+local function buildCharacter(page)
+  local head = CreateFrame("Frame", nil, page)
+  head:SetPoint("TOPLEFT"); head:SetPoint("TOPRIGHT"); head:SetHeight(74)
+  local holder = CreateFrame("Frame", nil, head)
+  holder:SetSize(56, 56); holder:SetPoint("TOPLEFT", 2, -4)
+  local bg = T.fill(holder, "BACKGROUND", T.C.midnight, 1)
+  bg:SetAllPoints()
+  char.icon = holder:CreateTexture(nil, "ARTWORK")
+  char.icon:SetPoint("TOPLEFT", 3, -3); char.icon:SetPoint("BOTTOMRIGHT", -3, 3)
+  char.iconEdge = T.outline(holder, 0, T.C.gold, 0.6, "OVERLAY")
+  char.name = T.text(head, "page"); char.name:SetPoint("TOPLEFT", holder, "TOPRIGHT", 16, 0)
+  char.line1 = T.text(head, "body"); char.line1:SetPoint("TOPLEFT", char.name, "BOTTOMLEFT", 0, -5)
+  char.line2 = T.text(head, "muted"); char.line2:SetPoint("TOPLEFT", char.line1, "BOTTOMLEFT", 0, -4)
+  char.site = T.button(head, "Open on the site", 168, function()
+    if char.shown then T.copyBox(char.shown .. " on the site", "https://" .. ns.SITE .. "/characters/" .. (char.shown:gsub(" ", "-"))) end
+  end, "tab")
+  char.site:SetPoint("TOPRIGHT", -26, -6)
+  local sep = T.fill(head, "ARTWORK", T.C.gold, 0.15)
+  sep:SetHeight(1); sep:SetPoint("BOTTOMLEFT"); sep:SetPoint("BOTTOMRIGHT", -26, 0)
+  local area = CreateFrame("Frame", nil, page)
+  area:SetPoint("TOPLEFT", 0, -86); area:SetPoint("BOTTOMRIGHT")
+  char.canvas = Canvas(area)
+end
+
+local function characterHeader(name, classFile, line1, line2)
+  char.shown = name
+  local coords = CLASS_ICON_TCOORDS and classFile and CLASS_ICON_TCOORDS[classFile]
+  if coords then
+    char.icon:SetTexture("Interface\\WorldStateFrame\\ICONS-CLASSES")
+    char.icon:SetTexCoord(coords[1] + 0.015, coords[2] - 0.015, coords[3] + 0.015, coords[4] - 0.015)
+  else
+    char.icon:SetTexture(T.CREST)
+    char.icon:SetTexCoord(0, 1, 0, 1)
+  end
+  char.iconEdge:SetColor(T.C.gold, classFile and 0.7 or 0.3)
+  char.name:SetText(name and classed(name, classFile) or "")
+  char.line1:SetText(line1 or "")
+  char.line2:SetText(line2 or "")
+  char.site:SetShown(name ~= nil)
+end
+
+local function itemLink(g)
+  return "item:" .. g.id .. ":" .. (g.e or 0) .. ":0:0:0:0:" .. (g.sf or 0)
+end
+
+local function renderCharacter()
+  local C = char.canvas
+  C:Reset()
+  local name = ns.selected or ns.selfName
+  local rec = name and ns.players()[name]
+  local p = rec and ns.merge(rec.profile, rec.recipes)
+  if not p then
+    if rec then
+      local old = rec.addon and ns.newer(ns.VERSION, rec.addon)
+      characterHeader(name, rec.class, old and ("Their addon (" .. safe(rec.addon) .. ") is older than yours and can't share with it.")
+        or "Their profile hasn't arrived yet.", old and ("Ask them to update: " .. ns.SITE .. "/addon") or "It comes through while you're both online.")
+    else
+      characterHeader(nil, nil, "Pick someone on the Guild tab.", nil)
+    end
+    return
+  end
+  local c = p.char or {}
+  local muted = T.HEX.muted
+  local spec = p.spec and p.spec.n ~= c.class and p.spec.n or nil
+  local ilvl = ns.avgItemLevel(p)
+  local line1 = {}
+  if c.level then line1[#line1 + 1] = "Level " .. c.level end
+  if c.race then line1[#line1 + 1] = safe(c.race) end
+  if c.class then line1[#line1 + 1] = color(ns.classColor(c.classFile), (spec and (safe(spec) .. " ") or "") .. safe(c.class)) end
+  local line2 = {}
+  if c.guild then line2[#line2 + 1] = color(T.HEX.warm, "<" .. safe(c.guild) .. ">") .. (c.guildRank and (" " .. safe(c.guildRank)) or "") end
+  if ilvl then line2[#line2 + 1] = "item level " .. ilvl end
+  line2[#line2 + 1] = "updated " .. ns.ago(rec.pt)
+  characterHeader(name, c.classFile, table.concat(line1, "  ·  "), table.concat(line2, "  ·  "))
+  -- Left column: gear, stats
+  C:Col(1)
+  C:Heading("Gear")
+  local bySlot = {}
+  for _, g in ipairs(p.gear or {}) do bySlot[g.s] = g end
+  for _, slot in ipairs(ns.SLOTS) do
+    local g = bySlot[slot[1]]
+    if g then
+      local q = ns.QUALITY[g.q or 1] or "ffffff"
+      C:Line(T.itemIcon(g.id, 17) .. color(q, safe(g.n or ("Item " .. g.id))) .. color(muted, "  " .. slot[2] .. (g.il and ("  " .. g.il) or "")),
+        "small", itemLink(g))
+      if g.en then C:Line(color("7fe07a", safe(g.en)), "muted", nil, 22) end
+    end
+  end
+  local s, r = p.stats or {}, p.res or {}
+  if next(s) then
+    C:Heading("Stats")
+    C:Line(string.format("Health %s    Mana %s    Armor %s", s.hp or "-", s.mp or "-", s.armor or "-"), "small")
+    C:Line(string.format("Str %s   Agi %s   Sta %s   Int %s   Spi %s", s.str or "-", s.agi or "-", s.sta or "-", s["int"] or "-", s.spi or "-"), "small")
+    C:Line(color("ff7a45", "Fire " .. (r.fire or 0)) .. "   " .. color("7fd46a", "Nature " .. (r.nature or 0)) .. "   " ..
+      color("6fc8ff", "Frost " .. (r.frost or 0)) .. "   " .. color("b28cff", "Shadow " .. (r.shadow or 0)) .. "   " ..
+      color("f0d8ff", "Arcane " .. (r.arcane or 0)), "small")
+  end
+
+  -- Right column: talents, professions, attunements, reputation
+  C:Col(2)
+  C:Heading("Talents")
+  if p.spec and p.spec.n then C:Line(safe(p.spec.n) .. (p.spec.role and ns.ROLE[p.spec.role] and color(muted, "  ·  " .. ns.ROLE[p.spec.role]) or ""), "body") end
+  for _, t in ipairs(p.talents and p.talents.trees or {}) do C:Line(safe(t.n) .. color(T.HEX.gold, "  " .. (t.pts or 0)), "small") end
+  local talents = {}
+  for _, t in ipairs(p.talents and p.talents.list or {}) do talents[#talents + 1] = t end
+  table.sort(talents, function(a, b) return (a.y or 0) < (b.y or 0) or ((a.y or 0) == (b.y or 0) and (a.x or 0) < (b.x or 0)) end)
+  for _, t in ipairs(talents) do
+    C:Line(safe(t.n) .. color(t.r == t.m and T.HEX.ok or T.HEX.gold, "  " .. (t.r or 0) .. (t.m and ("/" .. t.m) or "")), "small", t.sp and ("spell:" .. t.sp) or nil, 8)
+  end
+  C:Heading("Professions")
+  for _, x in ipairs(p.profs or {}) do
+    local n = x.recipes and #x.recipes or 0
+    C:Line(safe(x.n) .. (x.m and color(muted, "  " .. (x.r or 0) .. " / " .. x.m) or "") ..
+      (n > 0 and color(T.HEX.gold, "  ·  " .. n .. " recipes") or ""), "small")
+  end
+  C:Heading("Attunements & keys")
+  for _, a in ipairs(ns.ATTUNEMENTS) do
+    local done = ns.attuned(p, a)
+    C:Line((done and READY or NOT_READY) .. "  " .. (done and a.name or color("7a8298", a.name)), "small")
+  end
+  local reps = {}
+  for _, x in ipairs(p.rep or {}) do if x.id then reps[x.id] = x end end
+  local any = false
+  for _, id in ipairs(ns.RAID_FACTIONS) do
+    local x = reps[id]
+    if x and x.s then
+      if not any then C:Heading("Reputation"); any = true end
+      C:Line(safe(x.n) .. "  " .. color(ns.STANDING_COLOR[x.s] or "ffffff", ns.STANDING[x.s] or "") ..
+        (x.v and x.m and color(muted, string.format("  %d / %d", x.v, x.m)) or ""), "small")
+    end
+  end
+end
+
+-- ---------- Attunements tab ----------
+
+local att = {}
+
+local function buildAttunements(page)
+  local cols = { { "Name", 170 }, { "Lvl", 30, "RIGHT" } }
+  for _, a in ipairs(ns.ATTUNEMENTS) do cols[#cols + 1] = { a.short, 44, "CENTER" } end
+  att.list = List(page, cols)
+  att.cols = cols
+end
+
+local function renderAttunements()
+  local rows, counts = {}, {}
+  for _, e in ipairs(everyone(false)) do
+    if e.profile then
+      local cells = { T.classIcon(e.class) .. classed(e.name, e.class), e.level or "" }
+      for i, a in ipairs(ns.ATTUNEMENTS) do
+        local done = ns.attuned(e.profile, a)
+        if done then counts[i] = (counts[i] or 0) + 1 end
+        cells[#cells + 1] = done and READY or NOT_READY
+      end
+      rows[#rows + 1] = { cells = cells, name = e.name, level = e.level or 0,
+        onClick = function() ns.selected = e.name; ns.showTab("Character") end }
+    end
+  end
+  table.sort(rows, function(a, b) return a.level > b.level or (a.level == b.level and a.name < b.name) end)
+  for i, a in ipairs(ns.ATTUNEMENTS) do
+    att.cols[i + 2].header.label:SetText(a.short:upper() .. " " .. color(T.HEX.text, counts[i] or 0))
+  end
+  att.list:SetRows(rows)
+end
+
+-- ---------- Crafters tab ----------
+
+local crafters = { filter = "" }
+
+local function buildCrafters(page)
+  local search = T.searchBox(page, 300, "Search recipes…", function(t) crafters.filter = t:lower(); ns.refreshUI() end)
+  search:SetPoint("TOPLEFT", 2, 0)
+  crafters.hint = T.text(page, "muted")
+  crafters.hint:SetPoint("LEFT", search, "RIGHT", 14, 0)
+  local area = CreateFrame("Frame", nil, page)
+  area:SetPoint("TOPLEFT", 0, -38)
+  area:SetPoint("BOTTOMRIGHT")
+  crafters.list = List(area, { { "Recipe", 300 }, { "Profession", 120 }, { "Who can make it", 280 } })
+end
+
+local function renderCrafters()
+  -- recipe name -> { prof, item, spell, people }
+  local index, count = {}, 0
+  for name, rec in pairs(ns.players()) do
+    if type(rec) == "table" and type(rec.recipes) == "table" then
+      for prof, saved in pairs(rec.recipes) do
+        for _, r in ipairs(type(saved) == "table" and saved.list or {}) do
+          if r.n then
+            local e = index[r.n]
+            if not e then e = { prof = prof, item = r.it, spell = r.id, people = {} }; index[r.n] = e; count = count + 1 end
+            e.people[#e.people + 1] = name
+          end
+        end
+      end
+    end
+  end
+  local rows, shown = {}, 0
+  for recipe, e in pairs(index) do
+    if crafters.filter == "" or recipe:lower():find(crafters.filter, 1, true) then
+      shown = shown + 1
+      if shown <= 300 then
+        table.sort(e.people)
+        local names = {}
+        for _, n in ipairs(e.people) do
+          local rec = ns.players()[n]
+          names[#names + 1] = classed(n, rec and rec.class)
+        end
+        rows[#rows + 1] = {
+          sortKey = recipe:lower(),
+          cells = { T.itemIcon(e.item) .. safe(recipe), color(T.HEX.muted, safe(e.prof)), table.concat(names, ", ") },
+          onEnter = function(row)
+            local link = e.item and ("item:" .. e.item) or e.spell and ("spell:" .. e.spell)
+            if not link then return end
+            GameTooltip:SetOwner(row, "ANCHOR_RIGHT")
+            pcall(GameTooltip.SetHyperlink, GameTooltip, link)
+            GameTooltip:AddLine("Click to whisper " .. e.people[1], T.C.gold[1], T.C.gold[2], T.C.gold[3])
+            GameTooltip:Show()
+          end,
+          onClick = function()
+            -- Straight to a whisper: typing "/w First Surname" would stop at the space.
+            local tell = (ChatFrameUtil and ChatFrameUtil.SendTell) or ChatFrame_SendTell
+            if tell then pcall(tell, e.people[1]) end
+          end,
+        }
+      end
+    end
+  end
+  table.sort(rows, function(a, b) return a.sortKey < b.sortKey end)
+  crafters.hint:SetText(count == 0 and "No recipes yet: guildmates share them after opening their profession windows."
+    or string.format("%d recipes known across the guild%s", count, shown > 300 and "  ·  showing the first 300 matches" or ""))
+  crafters.list:SetRows(rows)
+end
+
+-- ---------- Calendar tab ----------
+
+local cal = { selected = nil }
+local STATUS_TEXT = { coming = "Coming", tentative = "Tentative", absent = "Can't make it" }
+local STATUS_COLOR = { coming = T.HEX.ok, tentative = T.HEX.warm, absent = "7a8298" }
+
+local function whenText(t) return date("%a %b %d, %H:%M", t) end
+
+local function myClass() return select(2, UnitClass("player")) end
+
+-- The spec's role when the class can take it, otherwise the class's first role.
+local function myRole()
+  local me = ns.me()
+  local role = ns.ROLE[me and me.profile and me.profile.spec and me.profile.spec.role or ""]
+  if role and ns.canTake(myClass(), role) then return role end
+  return ns.classRoles(myClass())[1]
+end
+
+local function buildCalendar(page)
+  local left = CreateFrame("Frame", nil, page)
+  left:SetPoint("TOPLEFT"); left:SetPoint("BOTTOMLEFT"); left:SetWidth(384)
+  cal.list = List(left, { { "When", 118 }, { "Raid", 146 }, { "Coming", 56, "RIGHT" } })
+
+  local right = CreateFrame("Frame", nil, page)
+  right:SetPoint("TOPLEFT", 398, 0); right:SetPoint("BOTTOMRIGHT")
+  T.panel(right)
+  cal.title = T.text(right, "heading"); cal.title:SetPoint("TOPLEFT", 14, -12); cal.title:SetPoint("RIGHT", -14, 0)
+  cal.when = T.text(right, "body"); cal.when:SetPoint("TOPLEFT", cal.title, "BOTTOMLEFT", 0, -6); cal.when:SetPoint("RIGHT", -14, 0)
+  cal.mine = T.text(right, "muted"); cal.mine:SetPoint("TOPLEFT", cal.when, "BOTTOMLEFT", 0, -4); cal.mine:SetPoint("RIGHT", -14, 0)
+  cal.status = {}
+  local x = 14
+  for _, s in ipairs({ "coming", "tentative", "absent" }) do
+    local b = T.button(right, STATUS_TEXT[s], s == "absent" and 118 or 100, function()
+      if cal.selected then ns.signUp(cal.selected, s, cal.role or myRole()); ns.refreshUI(true) end
+    end, "tab")
+    b:SetPoint("TOPLEFT", x, -86)
+    cal.status[s] = b
+    x = x + (s == "absent" and 118 or 100) + 8
+  end
+  cal.roles = {}
+  x = 14
+  for _, r in ipairs({ "Tank", "Healer", "DPS" }) do
+    local b = T.button(right, r, 100, function()
+      cal.role = r
+      local mine = cal.selected and PerpetuaCharDB.signups and PerpetuaCharDB.signups[cal.selected]
+      if mine then ns.signUp(cal.selected, mine.s, r) end
+      ns.refreshUI(true)
+    end, "tab")
+    b:SetPoint("TOPLEFT", x, -118)
+    cal.roles[r] = b
+    x = x + 108
+  end
+  local area = CreateFrame("Frame", nil, right)
+  area:SetPoint("TOPLEFT", 8, -154); area:SetPoint("BOTTOMRIGHT", -4, 6)
+  cal.canvas = Canvas(area, { width = 350, x = { 6, 6 }, w = 330 })
+  cal.right = right
+end
+
+local function renderCalendar()
+  local c = ns.calendar()
+  local events = {}
+  for _, e in ipairs(c and c.events or {}) do
+    if (e.t or 0) + (e.dur or 180) * 60 > ns.now() then events[#events + 1] = e end
+  end
+  table.sort(events, function(a, b) return a.t < b.t end)
+  if not cal.selected or not (function() for _, e in ipairs(events) do if e.id == cal.selected then return true end end end)() then
+    cal.selected = events[1] and events[1].id
+  end
+  local rows = {}
+  for _, e in ipairs(events) do
+    local coming = 0
+    for _, s in ipairs(ns.eventSignups(e)) do if s.s == "coming" then coming = coming + 1 end end
+    local label = safe(e.title or e.instance or "Raid")
+    if e.cancelled == 1 then label = color("7a8298", label .. " (cancelled)") end
+    rows[#rows + 1] = {
+      cells = { (e.id == cal.selected and color(T.HEX.pale, whenText(e.t)) or whenText(e.t)), label, coming .. "/" .. (e.size or 40) },
+      onClick = function() cal.selected = e.id; cal.role = nil; ns.refreshUI(true) end,
+    }
+  end
+  cal.list:SetRows(rows)
+
+  local C = cal.canvas
+  C:Reset()
+  local e
+  for _, x in ipairs(events) do if x.id == cal.selected then e = x end end
+  for _, b in pairs(cal.status) do b:SetShown(e ~= nil and e.cancelled ~= 1) end
+  -- Only the roles this class can fill, side by side.
+  local x = 14
+  for _, r in ipairs({ "Tank", "Healer", "DPS" }) do
+    local b = cal.roles[r]
+    local show = e ~= nil and e.cancelled ~= 1 and ns.canTake(myClass(), r)
+    b:SetShown(show)
+    if show then b:ClearAllPoints(); b:SetPoint("TOPLEFT", x, -118); x = x + 108 end
+  end
+  if not e then
+    cal.title:SetText("NO RAIDS SCHEDULED")
+    cal.when:SetText(c and "Officers schedule raids on " .. ns.SITE .. "/raids." or "The calendar arrives from an officer's addon.")
+    cal.mine:SetText(c and ("Calendar from " .. ns.ago(c.t)) or "")
+    return
+  end
+  cal.title:SetText(safe(e.title or e.instance):upper())
+  cal.when:SetText(whenText(e.t) .. " – " .. date("%H:%M", e.t + (e.dur or 180) * 60) .. color(T.HEX.muted, "  ·  " .. safe(e.instance) .. ", " .. (e.size or 40)))
+  local mine = PerpetuaCharDB.signups and PerpetuaCharDB.signups[e.id]
+  local list = ns.eventSignups(e)
+  local siteMine
+  for _, s in ipairs(list) do if s.n == ns.selfName then siteMine = s end end
+  local status = mine and mine.s or siteMine and siteMine.s
+  local role = cal.role or mine and mine.r or siteMine and siteMine.r
+  if not (role and ns.canTake(myClass(), role)) then role = myRole() end
+  cal.role = role
+  for s, b in pairs(cal.status) do b:SetSelected(s == status) end
+  for r, b in pairs(cal.roles) do b:SetSelected(r == role) end
+  cal.mine:SetText(status and ("You: " .. color(STATUS_COLOR[status], STATUS_TEXT[status]) .. (mine and (mine.t or 0) > (ns.calendar().t or 0) and "  (goes to the site with the next guild sync)" or ""))
+    or "You haven't signed up. Pick one below.")
+
+  C:Action("> Open this raid on the site", function() T.copyBox("Raid on the site", "https://" .. ns.SITE .. "/raids/" .. e.id) end)
+  if e.notes and e.notes ~= "" then
+    for line in (e.notes .. "\n"):gmatch("(.-)\n") do if line ~= "" then C:Para(color(T.HEX.muted, safe(line)), "small") end end
+  end
+  local groups = { Tank = {}, Healer = {}, DPS = {} }
+  local tentative, absent = {}, {}
+  for _, s in ipairs(list) do
+    local who = T.classIcon(s.c) .. classed(s.n, s.c) .. (s.l == "confirmed" and color(T.HEX.ok, "  in") or s.l == "bench" and color(T.HEX.muted, "  bench") or "")
+    if s.s == "coming" then table.insert(groups[s.r] or groups.DPS, who)
+    elseif s.s == "tentative" then tentative[#tentative + 1] = who
+    else absent[#absent + 1] = who end
+  end
+  for _, r in ipairs({ "Tank", "Healer", "DPS" }) do
+    C:Heading((r == "DPS" and "DPS" or r .. "s") .. "  " .. #groups[r])
+    if #groups[r] == 0 then C:Line(color(T.HEX.muted, "None yet"), "small") end
+    for _, w in ipairs(groups[r]) do C:Line(w, "small", nil, 6) end
+  end
+  if #tentative > 0 then C:Heading("Tentative  " .. #tentative); for _, w in ipairs(tentative) do C:Line(w, "small", nil, 6) end end
+  if #absent > 0 then C:Heading("Can't make it  " .. #absent); for _, w in ipairs(absent) do C:Line(w, "small", nil, 6) end end
+end
+
+-- ---------- Loot tab ----------
+
+local loot = { filter = "" }
+
+local function buildLoot(page)
+  local search = T.searchBox(page, 300, "Search items or players…", function(t) loot.filter = t:lower(); ns.refreshUI() end)
+  search:SetPoint("TOPLEFT", 2, 0)
+  loot.hint = T.text(page, "muted")
+  loot.hint:SetPoint("LEFT", search, "RIGHT", 14, 0)
+  local area = CreateFrame("Frame", nil, page)
+  area:SetPoint("TOPLEFT", 0, -38)
+  area:SetPoint("BOTTOMRIGHT")
+  loot.list = List(area, { { "When", 90 }, { "Item", 230 }, { "Winner", 150 }, { "Where", 100 }, { "Rolls", 130 } })
+end
+
+local function renderLoot()
+  local rows, log = {}, ns.lootLog()
+  for i = #log, 1, -1 do
+    local e = log[i]
+    local text = ((e.name or "") .. " " .. (e.n or "")):lower()
+    if loot.filter == "" or text:find(loot.filter, 1, true) then
+      local rolls = ns.rollsFor(e)
+      local top = {}
+      for j = 1, math.min(3, #rolls) do top[#top + 1] = safe((rolls[j].n or ""):match("^(%S+)")) .. " " .. rolls[j].r end
+      local rec = ns.players()[e.n]
+      rows[#rows + 1] = {
+        cells = { color(T.HEX.muted, date("%b %d %H:%M", e.t)), T.itemIcon(e.it) .. color(ns.QUALITY[e.q or 4] or "a335ee", safe(e.name or ("Item " .. e.it))),
+          classed(e.n, rec and rec.class), color(T.HEX.muted, safe(e.z or "")), table.concat(top, ", ") },
+        onEnter = function(row)
+          GameTooltip:SetOwner(row, "ANCHOR_RIGHT")
+          pcall(GameTooltip.SetHyperlink, GameTooltip, "item:" .. e.it)
+          if #rolls > 0 then
+            GameTooltip:AddLine(" ")
+            GameTooltip:AddLine("Rolls", T.C.gold[1], T.C.gold[2], T.C.gold[3])
+            for _, r in ipairs(rolls) do GameTooltip:AddDoubleLine(safe(r.n), r.r .. (r.hi ~= 100 and (" (" .. r.lo .. "-" .. r.hi .. ")") or ""), 1, 1, 1, 1, 1, 1) end
+          end
+          GameTooltip:Show()
+        end,
+      }
+      if #rows >= 300 then break end
+    end
+  end
+  loot.hint:SetText(#log == 0 and "Epic drops and /rolls in raids show up here." or (#log .. " drops recorded"))
+  loot.list:SetRows(rows)
+end
+
+-- ---------- Forums tab ----------
+
+local forum = { board = nil, selected = nil }
+
+local function buildForums(page)
+  forum.page = page
+  forum.tabs = {}  -- board buttons, made when the boards are known (they come with the snapshot)
+  forum.left = CreateFrame("Frame", nil, page)
+  forum.left:SetWidth(360)
+  forum.list = List(forum.left, { { "Thread", 240 }, { "Last", 56, "RIGHT" } })
+
+  forum.right = CreateFrame("Frame", nil, page)
+  T.panel(forum.right)
+  local inner = CreateFrame("Frame", nil, forum.right)
+  inner:SetPoint("TOPLEFT", 8, -10); inner:SetPoint("BOTTOMRIGHT", -4, 6)
+  forum.canvas = Canvas(inner, { width = 380, x = { 8, 8 }, w = 350 })
+end
+
+-- One tab per board ("All" first), wrapping onto a second row when they don't fit. Returns the height used.
+local function layoutBoardTabs(boards)
+  local list = { { id = false, n = "All" } }
+  for _, b in ipairs(boards) do list[#list + 1] = b end
+  local maxW = math.max(600, (forum.page:GetWidth() or 0) > 0 and forum.page:GetWidth() or 828)
+  local x, y = 0, 0
+  for i, b in ipairs(list) do
+    local tab = forum.tabs[i]
+    if not tab then
+      tab = T.button(forum.page, "", 80, function(self) forum.board = self.boardId or nil; forum.selected = nil; ns.refreshUI(true) end, "tab")
+      forum.tabs[i] = tab
+    end
+    tab.boardId = b.id
+    tab.label:SetText(safe(b.n):upper())
+    local w = math.ceil((tab.label:GetStringWidth() or 60) + 24)
+    tab:SetWidth(w)
+    if x > 0 and x + w > maxW then x, y = 0, y + 32 end
+    tab:ClearAllPoints()
+    tab:SetPoint("TOPLEFT", x, -y)
+    tab:SetSelected((forum.board or false) == b.id)
+    tab:Show()
+    x = x + w + 6
+  end
+  for i = #list + 1, #forum.tabs do forum.tabs[i]:Hide() end
+  return y + 26
+end
+
+local function renderForums()
+  local f = ns.forums()
+  local boards = {}
+  for _, b in ipairs(f and f.boards or {}) do boards[b.id] = b end
+  local top = layoutBoardTabs(f and f.boards or {}) + 10
+  forum.left:ClearAllPoints(); forum.left:SetPoint("TOPLEFT", 0, -top); forum.left:SetPoint("BOTTOMLEFT")
+  forum.right:ClearAllPoints(); forum.right:SetPoint("TOPLEFT", 374, -top); forum.right:SetPoint("BOTTOMRIGHT")
+  local threads = {}
+  for _, t in ipairs(f and f.threads or {}) do
+    if not forum.board or t.b == forum.board then threads[#threads + 1] = t end
+  end
+  table.sort(threads, function(a, b)
+    if (a.pin or 0) ~= (b.pin or 0) then return (a.pin or 0) > (b.pin or 0) end
+    return (a.last or 0) > (b.last or 0)
+  end)
+  local rows, current = {}, nil
+  for _, t in ipairs(threads) do
+    if t.id == forum.selected then current = t end
+    local mark = ns.threadUnread(t) and color(T.HEX.gold, "● ") or "   "
+    local title = (t.pin == 1 and color(T.HEX.warm, "Pinned  ") or "") .. (t.lock == 1 and color(T.HEX.muted, "Locked  ") or "") .. safe(t.title)
+    rows[#rows + 1] = {
+      cells = { mark .. (t.id == forum.selected and color(T.HEX.pale, title) or title), color(T.HEX.muted, ns.ago(t.last)) },
+      onClick = function() forum.selected = t.id; ns.refreshUI(true) end,
+    }
+  end
+  forum.list:SetRows(rows)
+
+  local C = forum.canvas
+  C:Reset()
+  if not f then
+    C:Para(color(T.HEX.muted, "The forums arrive from an officer's addon: when an officer with the Perpetua app logs in or presses Sync now, they're shared with everyone online."), "body")
+    return
+  end
+  if not current then
+    C:Heading(forum.board and boards[forum.board] and boards[forum.board].n or "Forums")
+    C:Para("Pick a thread on the left. " .. #threads .. " recently active " .. (#threads == 1 and "thread" or "threads") .. " from " .. ns.SITE .. "/forums, as of " .. ns.ago(f.t) .. ".", "body")
+    C:Para(color(T.HEX.muted, "Officer-only boards stay on the site."), "small")
+    return
+  end
+  ns.markThreadRead(current)
+  C:Para(color(T.HEX.gold, safe(current.title)), "heading")
+  C:Line(color(T.HEX.muted, (boards[current.b] and safe(boards[current.b].n) or "") .. "  ·  started by " .. safe(current.by) .. "  ·  " .. (current.n or 0) .. " posts"), "muted")
+  C:Gap(6)
+  local first = (current.n or 0) - #(current.posts or {})
+  if first > 0 then C:Line(color(T.HEX.muted, "Showing the latest " .. #current.posts .. " of " .. current.n .. " posts."), "muted") end
+  for _, p in ipairs(current.posts or {}) do
+    C:Gap(8)
+    local rank = p.r == "gm" and color(T.HEX.gold, "  Guild Master") or p.r == "officer" and color(T.HEX.gold, "  Officer") or ""
+    C:Line(color(T.HEX.pale, safe(p.by)) .. rank .. color(T.HEX.muted, "  ·  " .. ns.ago(p.t)), "small")
+    C:Para(safe(p.body), "small", 6)
+    if p.cut then C:Line(color(T.HEX.muted, "(continues on the site)"), "muted", nil, 6) end
+  end
+  C:Gap(12)
+  local threadUrl = "https://" .. ns.SITE .. "/forums/t/" .. current.id
+  C:Action("> Reply on the site" .. (current.lock == 1 and "  (locked)" or ""), function() T.copyBox("Reply on the site", threadUrl) end)
+  C:Line(color(T.HEX.muted, "Forums as of " .. ns.ago(f.t)), "muted")
+end
+
+-- ---------- Setup tab (first time) ----------
+-- Shown the first time someone opens the addon: what it does, why linking their characters to their Discord
+-- account on the site matters, and a box to enter the link code. The status card reads the site's list of
+-- known characters (it comes with the raid calendar) to say whether this character is linked yet.
+
+local setup = {}
+
+local function stepCard(parent, number, title)
+  local card = CreateFrame("Frame", nil, parent)
+  T.panel(card)
+  local badge = CreateFrame("Frame", nil, card)
+  badge:SetSize(30, 30); badge:SetPoint("TOPLEFT", 14, -14)
+  local bbg = T.fill(badge, "BACKGROUND", T.C.gold, 1); bbg:SetAllPoints()
+  local n = T.text(badge, "button", "CENTER"); n:SetPoint("CENTER", 0, 0); n:SetText(number)
+  n:SetTextColor(T.C.navy[1], T.C.navy[2], T.C.navy[3]); n:SetShadowColor(0, 0, 0, 0)
+  local h = T.text(card, "heading"); h:SetPoint("LEFT", badge, "RIGHT", 12, 0); h:SetText(title:upper())
+  card.body = card:CreateFontString(nil, "OVERLAY")
+  card.body:SetFontObject(T.fonts.small)
+  card.body:SetJustifyH("LEFT"); card.body:SetJustifyV("TOP"); card.body:SetWordWrap(true)
+  card.body:SetPoint("TOPLEFT", 16, -54); card.body:SetPoint("RIGHT", -16, 0)
+  function card:Fit()
+    card:SetHeight(math.ceil((card.body:GetStringHeight() or 40) + 70))
+  end
+  return card
+end
+
+local function buildSetup(page)
+  local left = CreateFrame("Frame", nil, page)
+  left:SetPoint("TOPLEFT"); left:SetPoint("BOTTOMLEFT"); left:SetWidth(452)
+  setup.cards = {
+    stepCard(left, "1", "What the addon does"),
+    stepCard(left, "2", "Why link your characters"),
+    stepCard(left, "3", "How to link"),
+  }
+  setup.cards[1].body:SetText("Everyone in the guild with the addon shares their gear, talents, professions, attunements and raid loot with each other, "
+    .. "right here in game. You'll also see the raid calendar and the guild forums, and can sign up for raids with one click.")
+  setup.cards[2].body:SetText("Linking ties this WoW account to your Discord account on " .. ns.SITE .. ". Then your characters show up there under your name, "
+    .. "with their full names, gear and professions, and your raid sign-ups and loot count as yours.\n\n"
+    .. color(T.HEX.pale, "You do it once.") .. " Every character on this WoW account follows by itself, and nobody has to type surnames.")
+  setup.cards[3].body:SetText("1.  On " .. color(T.HEX.pale, ns.SITE .. "/member") .. ", sign in with Discord and click " .. color(T.HEX.pale, "Get my link code") .. ".\n"
+    .. "2.  Type the six-letter code in the box on the right and press " .. color(T.HEX.pale, "Link") .. ".\n"
+    .. "3.  That's it. It goes through the next time an officer's computer syncs the guild, usually the same day. You don't need to stay online.")
+  setup.site = T.button(setup.cards[3], "Copy the address", 170, function() T.copyBox("Get your link code", "https://" .. ns.SITE .. "/member") end, "tab")
+  setup.site:SetPoint("BOTTOMLEFT", 16, 14)
+
+  local right = CreateFrame("Frame", nil, page)
+  right:SetPoint("TOPLEFT", 468, 0); right:SetPoint("BOTTOMRIGHT")
+  local status = CreateFrame("Frame", nil, right)
+  status:SetPoint("TOPLEFT"); status:SetPoint("TOPRIGHT", -2, 0); status:SetHeight(250)
+  T.panel(status)
+  setup.statusAccent = T.fill(status, "ARTWORK", T.C.gold, 1)
+  setup.statusAccent:SetPoint("TOPLEFT"); setup.statusAccent:SetPoint("BOTTOMLEFT"); setup.statusAccent:SetWidth(3)
+  local sh = T.text(status, "label"); sh:SetPoint("TOPLEFT", 18, -16); sh:SetText("YOUR STATUS")
+  setup.state = T.text(status, "heading"); setup.state:SetPoint("TOPLEFT", sh, "BOTTOMLEFT", 0, -10)
+  setup.detail = status:CreateFontString(nil, "OVERLAY")
+  setup.detail:SetFontObject(T.fonts.small); setup.detail:SetJustifyH("LEFT"); setup.detail:SetJustifyV("TOP"); setup.detail:SetWordWrap(true)
+  setup.detail:SetPoint("TOPLEFT", setup.state, "BOTTOMLEFT", 0, -8); setup.detail:SetPoint("RIGHT", -16, 0)
+  setup.code = T.searchBox(status, 150, "Link code", function() end)
+  setup.code:SetMaxLetters(6)
+  setup.code:SetPoint("BOTTOMLEFT", 18, 18)
+  setup.link = T.button(status, "Link", 90, function()
+    local code = (setup.code:GetText() or ""):upper():gsub("%s", "")
+    if not code:match("^%w%w%w%w%w%w$") then setup.error:SetText(color(T.HEX.danger, "Codes are six letters and numbers.")); return end
+    PerpetuaDB.link = { code = code, t = ns.now() }
+    setup.code:SetText("")
+    setup.code:ClearFocus()
+    setup.error:SetText("")
+    ns.refreshSelf()
+    ns.refreshUI(true)
+  end)
+  setup.link:SetPoint("LEFT", setup.code, "RIGHT", 10, 0)
+  setup.code:SetScript("OnEnterPressed", function() setup.link:Click() end)
+  setup.error = T.text(status, "muted"); setup.error:SetPoint("BOTTOMLEFT", setup.code, "TOPLEFT", 0, 6)
+
+  local shares = right:CreateFontString(nil, "OVERLAY")
+  shares:SetFontObject(T.fonts.muted); shares:SetJustifyH("LEFT"); shares:SetJustifyV("TOP"); shares:SetWordWrap(true)
+  shares:SetPoint("TOPLEFT", status, "BOTTOMLEFT", 4, -16); shares:SetPoint("RIGHT", -6, 0)
+  shares:SetText(color(T.HEX.gold, "SHARED WITH THE GUILD") .. "\nYour characters' gear, talents, professions, attunements, reputations, raid sign-ups and the loot you see in raids.\n\n"
+    .. color(T.HEX.gold, "NEVER SHARED") .. "\nGold, bags and bank, chat and whispers, your Battle.net account. The addon never goes online; it only talks to guildmates in game.")
+  local done = T.button(right, "Done", 150, function()
+    PerpetuaDB.setupSeen = true
+    ns.showTab("Guild")
+  end)
+  done:SetPoint("BOTTOMRIGHT", -2, 6)
+end
+
+local function renderSetup()
+  local y = 0
+  for _, card in ipairs(setup.cards) do
+    card:Fit()
+    card:ClearAllPoints()
+    card:SetPoint("TOPLEFT", 0, -y); card:SetPoint("RIGHT", 0, 0)
+    y = y + card:GetHeight() + 12
+  end
+  setup.cards[3]:SetHeight(setup.cards[3]:GetHeight() + 40) -- room for the button
+
+  local cal = ns.calendar()
+  local known = {}
+  for _, n in ipairs(cal and cal.roster or {}) do known[n] = true end
+  local mine, others = ns.selfName and known[ns.selfName], 0
+  for alt in pairs(PerpetuaDB.account or {}) do if alt ~= ns.selfName and known[alt] then others = others + 1 end end
+  local pending = PerpetuaDB.link
+
+  if mine then
+    setup.statusAccent:SetVertexColor(0.56, 0.82, 0.54)
+    setup.state:SetText(color(T.HEX.ok, "LINKED"))
+    setup.detail:SetText(safe(ns.selfName) .. " is on " .. ns.SITE .. (others > 0 and (", along with " .. others .. " of your other characters.") or ".")
+      .. "\n\nNew characters on this account are added by themselves. Enter a code again only if you want them under a different Discord account.")
+  elseif pending then
+    setup.statusAccent:SetVertexColor(T.C.gold[1], T.C.gold[2], T.C.gold[3])
+    setup.state:SetText(color(T.HEX.warm, "CODE SAVED"))
+    setup.detail:SetText("Code " .. color(T.HEX.pale, safe(pending.code)) .. " goes to the site with the next guild sync (saved " .. ns.ago(pending.t) .. ").\n\n"
+      .. "Nothing else to do. If a week passes without your characters appearing on the site, get a new code.")
+  else
+    setup.statusAccent:SetVertexColor(T.C.muted[1], T.C.muted[2], T.C.muted[3])
+    setup.state:SetText("NOT LINKED YET")
+    setup.detail:SetText("Your characters aren't on " .. ns.SITE .. " yet" .. (cal and "" or " (or the site's list hasn't reached you: it comes with the raid calendar)")
+      .. ". Get a code on the site and enter it below.")
+  end
+end
+
+-- ---------- Welcome page (not in the guild) ----------
+-- The addon only works for members of Perpetua (ns.locked). Anyone else sees this page instead of the tabs: who we
+-- are, that we're recruiting, where to apply, and why the addon has nothing to show them yet.
+
+local welcome = {}
+
+local function infoCard(parent, iconName, title)
+  local card = CreateFrame("Frame", nil, parent)
+  T.panel(card)
+  local icon = T.icon(card, "Interface\\Icons\\" .. iconName, 30)
+  icon:SetPoint("TOPLEFT", 14, -14)
+  local h = T.text(card, "heading"); h:SetPoint("LEFT", icon, "RIGHT", 12, 0); h:SetText(title:upper())
+  card.body = card:CreateFontString(nil, "OVERLAY")
+  card.body:SetFontObject(T.fonts.small)
+  card.body:SetJustifyH("LEFT"); card.body:SetJustifyV("TOP"); card.body:SetWordWrap(true); card.body:SetSpacing(2)
+  card.body:SetPoint("TOPLEFT", 16, -56); card.body:SetPoint("RIGHT", -16, 0)
+  function card:Fit(extra)
+    card:SetHeight(math.ceil((card.body:GetStringHeight() or 40) + 72 + (extra or 0)))
+  end
+  return card
+end
+
+local function buildWelcome(page)
+  local left = CreateFrame("Frame", nil, page)
+  left:SetPoint("TOPLEFT"); left:SetPoint("BOTTOMLEFT"); left:SetWidth(452)
+  welcome.cards = {
+    infoCard(left, "INV_BannerPVP_02", "Who we are"),
+    infoCard(left, "INV_Misc_Note_01", "We're recruiting"),
+    infoCard(left, "INV_Misc_Book_09", "About this addon"),
+  }
+  welcome.cards[1].body:SetText("Perpetua is an " .. color(T.HEX.pale, "Alliance") .. " guild on the " .. color(T.HEX.pale, "PvP")
+    .. " ruleset for World of Warcraft: Forever, and a community that has been gaming together for over eight years.\n\n"
+    .. "We're about the people first. We have a strong PvE and PvP presence, including players who have competed at the highest levels of both, "
+    .. "but you don't need to be hardcore to belong here: good people and good conversation matter most.")
+  welcome.cards[2].body:SetText("We're building a raid team and a community that's still standing long after launch week, and every role is welcome.\n\n"
+    .. "Apply on " .. color(T.HEX.pale, ns.SITE) .. ", get to know us on Discord, and see if Perpetua feels like home. We'd love to meet you.")
+  welcome.cards[3].body:SetText("This is Perpetua's guild companion. Members share their gear, talents, professions, attunements and raid loot with each other, "
+    .. "see the raid calendar and the guild forums, and link their characters to " .. ns.SITE .. ".\n\n"
+    .. color(T.HEX.pale, "It only works inside the guild.") .. " Everything travels over Perpetua's private guild channel, so until you join there's nothing to show. "
+    .. "Keep it installed: the moment you're in, it unlocks by itself.")
+
+  local right = CreateFrame("Frame", nil, page)
+  right:SetPoint("TOPLEFT", 468, 0); right:SetPoint("BOTTOMRIGHT")
+  local hero = CreateFrame("Frame", nil, right)
+  hero:SetPoint("TOPLEFT"); hero:SetPoint("TOPRIGHT", -2, 0); hero:SetHeight(300)
+  T.panel(hero)
+  local crest = hero:CreateTexture(nil, "ARTWORK")
+  crest:SetTexture(T.CREST); crest:SetSize(72, 72); crest:SetPoint("TOP", 0, -26)
+  local name = T.text(hero, "title", "CENTER"); name:SetPoint("TOP", crest, "BOTTOM", 0, -12); name:SetText("PERPETUA")
+  local tag = T.text(hero, "tagline", "CENTER"); tag:SetPoint("TOP", name, "BOTTOM", 0, -6); tag:SetText("Alliance  ·  PvP  ·  Now recruiting")
+  local rule = T.rule(hero); rule:SetWidth(180); rule:SetPoint("TOP", tag, "BOTTOM", 0, -12)
+  local apply = T.button(hero, "Apply to join", 190, function() T.copyBox("Apply to join Perpetua", "https://" .. ns.SITE .. "/apply") end)
+  apply:SetPoint("TOP", tag, "BOTTOM", 0, -40)
+  local about = T.button(hero, "More about us", 190, function() T.copyBox("About Perpetua", "https://" .. ns.SITE .. "/who-we-are") end, "tab")
+  about:SetPoint("TOP", apply, "BOTTOM", 0, -10)
+  local hint = T.text(hero, "muted", "CENTER"); hint:SetPoint("TOP", about, "BOTTOM", 0, -12)
+  hint:SetText("Copy the address and open it in your browser.")
+
+  local status = CreateFrame("Frame", nil, right)
+  status:SetPoint("TOPLEFT", hero, "BOTTOMLEFT", 0, -12); status:SetPoint("RIGHT", -2, 0); status:SetHeight(140)
+  T.panel(status)
+  local accent = T.fill(status, "ARTWORK", T.C.muted, 1)
+  accent:SetPoint("TOPLEFT"); accent:SetPoint("BOTTOMLEFT"); accent:SetWidth(3)
+  local sh = T.text(status, "label"); sh:SetPoint("TOPLEFT", 18, -16); sh:SetText("THIS CHARACTER")
+  welcome.state = T.text(status, "heading"); welcome.state:SetPoint("TOPLEFT", sh, "BOTTOMLEFT", 0, -10)
+  welcome.detail = status:CreateFontString(nil, "OVERLAY")
+  welcome.detail:SetFontObject(T.fonts.small); welcome.detail:SetJustifyH("LEFT"); welcome.detail:SetJustifyV("TOP"); welcome.detail:SetWordWrap(true)
+  welcome.detail:SetPoint("TOPLEFT", welcome.state, "BOTTOMLEFT", 0, -8); welcome.detail:SetPoint("RIGHT", -16, 0)
+end
+
+local function renderWelcome()
+  local y = 0
+  for _, card in ipairs(welcome.cards) do
+    card:Fit()
+    card:ClearAllPoints()
+    card:SetPoint("TOPLEFT", 0, -y); card:SetPoint("RIGHT", 0, 0)
+    y = y + card:GetHeight() + 12
+  end
+  local guild = IsInGuild() and ns.guildName()
+  local horde = try(UnitFactionGroup, "player") == "Horde"
+  welcome.state:SetText(guild and ("IN <" .. safe(guild):upper() .. ">") or "NOT IN A GUILD")
+  welcome.detail:SetText((guild and "The addon stays locked on characters in other guilds." or "Join Perpetua and everything here unlocks.")
+    .. (horde and ("\n\nPerpetua is an Alliance guild, so you'll need an Alliance character to join us.") or ""))
+end
+
+-- ---------- Export tab ----------
+
+local export = {}
+
+local function buildExport(page)
+  export.info = T.text(page, "body")
+  export.info:SetPoint("TOPLEFT", 4, 0)
+  export.info:SetPoint("TOPRIGHT", -4, 0)
+  export.info:SetWordWrap(true)
+  export.info:SetJustifyV("TOP")
+  export.info:SetHeight(110)
+  export.info:SetSpacing(4)
+
+  local box = CreateFrame("Frame", nil, page)
+  box:SetPoint("TOPLEFT", 0, -118)
+  box:SetPoint("BOTTOMRIGHT", 0, 46)
+  local bg = T.fill(box, "BACKGROUND", T.C.midnight, 1)
+  bg:SetAllPoints()
+  T.outline(box, 0, T.C.gold, 0.4)
+
+  local scroll = CreateFrame("ScrollFrame", nil, box, "UIPanelScrollFrameTemplate")
+  scroll:SetPoint("TOPLEFT", 10, -8)
+  scroll:SetPoint("BOTTOMRIGHT", -30, 8)
+  local edit = CreateFrame("EditBox", nil, scroll)
+  edit:SetMultiLine(true)
+  edit:SetMaxLetters(0)
+  edit:SetFontObject(ChatFontNormal)
+  edit:SetTextColor(T.C.pale[1], T.C.pale[2], T.C.pale[3])
+  edit:SetWidth(700)
+  edit:SetAutoFocus(false)
+  edit:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
+  -- Read-only: typing puts the export back and selects it again.
+  edit:SetScript("OnTextChanged", function(self, userInput)
+    if userInput and self:GetText() ~= export.text then self:SetText(export.text or ""); self:HighlightText() end
+  end)
+  edit:SetScript("OnEditFocusGained", function(self) self:HighlightText() end)
+  edit:SetScript("OnMouseUp", function(self) self:HighlightText() end)
+  scroll:SetScrollChild(edit)
+  export.edit = edit
+
+  local sync = T.button(page, "Sync now", 150, function() ns.refreshSelf(true); ReloadUI() end, "tab")
+  sync:SetPoint("BOTTOMRIGHT", 0, 6)
+  sync:SetScript("OnEnter", function(self)
+    GameTooltip:SetOwner(self, "ANCHOR_TOP")
+    GameTooltip:AddLine("Sync now", T.C.gold[1], T.C.gold[2], T.C.gold[3])
+    GameTooltip:AddLine("Reloads your UI so WoW saves the guild's data for the Perpetua app.", 1, 1, 1, true)
+    GameTooltip:Show()
+  end)
+  sync:SetScript("OnLeave", function() GameTooltip:Hide() end)
+  local copy = T.button(page, "Select all", 150, function() ns.renderExport(true) end, "tab")
+  copy:SetPoint("RIGHT", sync, "LEFT", -12, 0)
+  export.status = T.text(page, "muted")
+  export.status:SetPoint("BOTTOMLEFT", 2, 12)
+end
+
+local function summary(d)
+  local parts, missing = {}, {}
+  if d.gear then parts[#parts + 1] = #d.gear .. " items" end
+  if d.spec and d.spec.n then parts[#parts + 1] = safe(d.spec.n) .. " talents" end
+  for _, p in ipairs(d.profs or {}) do
+    if p.recipes then parts[#parts + 1] = safe(p.n) .. " (" .. #p.recipes .. " recipes)"
+    else
+      parts[#parts + 1] = safe(p.n)
+      if not ns.NO_RECIPES[p.n] then missing[#missing + 1] = safe(p.n) end
+    end
+  end
+  local line = color(T.HEX.muted, "Includes " .. table.concat(parts, ", ") .. ".")
+  if #missing > 0 then line = line .. "\n" .. color(T.HEX.warm, "Open your " .. table.concat(missing, " and ") .. " window once to include those recipes.") end
+  if d.errors then line = line .. "\n" .. color(T.HEX.danger, "Some parts couldn't be read (" .. #d.errors .. "). The rest is fine; tell an officer if this keeps happening.") end
+  return line
+end
+
+function ns.renderExport(focus)
+  local me = ns.me()
+  if not me or not me.profile then return end
+  local d = ns.merge(me.profile, me.recipes)
+  d.t = math.max(me.pt or 0, me.rt or 0)
+  export.text = ns.pack(d)
+  export.edit:SetText(export.text)
+  export.info:SetText("Paste this on " .. color(T.HEX.gold, ns.SITE .. "/characters/" .. safe((ns.selfName:gsub(" ", "-")))) .. " while signed in. It's selected: press " ..
+    color(T.HEX.pale, "Ctrl+C") .. ".\nOr let the officers' Perpetua app pick it up: it's saved when you log out or press Sync now.\n" ..
+    (PerpetuaDB.link and color(T.HEX.ok, "Link code " .. safe(PerpetuaDB.link.code) .. " is waiting for the next guild sync.")
+      or color(T.HEX.muted, "Not on the site yet? Get a code at " .. ns.SITE .. "/member and type /perpetua link CODE.")) .. "\n\n" .. summary(d))
+  local n = 0
+  for _ in pairs(ns.session.heard) do n = n + 1 end
+  export.status:SetText(string.format("Guild sync: heard from %d guildmates this session  ·  %d updates received", n, ns.session.received))
+  if focus then export.edit:SetFocus(); export.edit:HighlightText() end
+end
+
+-- ---------- window ----------
+
+local TABS = {
+  { "Guild", buildGuild, renderGuild },
+  { "Character", buildCharacter, renderCharacter },
+  { "Calendar", buildCalendar, renderCalendar },
+  { "Attunements", buildAttunements, renderAttunements },
+  { "Crafters", buildCrafters, renderCrafters },
+  { "Loot", buildLoot, renderLoot },
+  { "Forums", buildForums, renderForums },
+  { "Export", buildExport, function() ns.renderExport() end },
+  { "Setup", buildSetup, renderSetup },
+  { "Welcome", buildWelcome, renderWelcome, noNav = true }, -- the only page for characters outside the guild
+}
+
+local NAV = {
+  Guild = { "INV_BannerPVP_02", "Everyone in the guild with the addon" },
+  Character = { "INV_Chest_Plate16", "Gear, talents, professions and more" },
+  Calendar = { "INV_Misc_PocketWatch_01", "Upcoming raids and who's coming" },
+  Attunements = { "INV_Misc_Key_14", "Who can get in where" },
+  Crafters = { "Trade_BlackSmithing", "Who can make what" },
+  Loot = { "INV_Misc_Bag_10", "Raid drops and the rolls for them" },
+  Forums = { "INV_Scroll_03", "The latest from the guild forums" },
+  Export = { "INV_Scroll_05", "Your profile for the site" },
+  Setup = { "INV_Misc_Book_09", "Link your characters to perpetua.gg" },
+  Welcome = { "INV_BannerPVP_02", "The guild companion for Perpetua members" },
+}
+
+local function build()
+  main = CreateFrame("Frame", "PerpetuaFrame", UIParent)
+  main:SetSize(1020, 640)
+  main:SetPoint("CENTER")
+  main:SetFrameStrata("HIGH")
+  main:SetMovable(true)
+  main:EnableMouse(true)
+  main:RegisterForDrag("LeftButton")
+  main:SetScript("OnDragStart", main.StartMoving)
+  main:SetScript("OnDragStop", main.StopMovingOrSizing)
+  main:SetClampedToScreen(true)
+  T.window(main)
+  tinsert(UISpecialFrames, "PerpetuaFrame") -- Escape closes it
+  main:Hide()
+
+  -- Sidebar: crest and wordmark, the sections, sync status at the bottom.
+  local side = CreateFrame("Frame", nil, main)
+  side:SetPoint("TOPLEFT", 1, -3); side:SetPoint("BOTTOMLEFT", 1, 1); side:SetWidth(200)
+  local sbg = T.fill(side, "BACKGROUND", T.C.midnight, 0.75)
+  sbg:SetAllPoints()
+  local edge = T.fill(side, "BORDER", T.C.gold, 0.18)
+  edge:SetWidth(1); edge:SetPoint("TOPRIGHT"); edge:SetPoint("BOTTOMRIGHT")
+  local crest = side:CreateTexture(nil, "ARTWORK")
+  crest:SetTexture(T.CREST); crest:SetSize(40, 40); crest:SetPoint("TOPLEFT", 16, -18)
+  local brand = T.text(side, "brand"); brand:SetPoint("TOPLEFT", crest, "TOPRIGHT", 10, -3); brand:SetText("PERPETUA")
+  local tag = T.text(side, "muted"); tag:SetPoint("TOPLEFT", brand, "BOTTOMLEFT", 0, -3); tag:SetText("guild companion")
+  for i, t in ipairs(TABS) do
+    if not t.noNav then
+      local b = T.navButton(side, t[1], "Interface\\Icons\\" .. NAV[t[1]][1], function() ns.showTab(t[1]) end)
+      b:SetPoint("TOPLEFT", 0, -84 - (i - 1) * 40); b:SetPoint("RIGHT", -1, 0)
+      tabs[t[1]] = b
+    end
+  end
+  main.sync = T.text(side, "muted")
+  main.sync:SetPoint("BOTTOMLEFT", 18, 54); main.sync:SetPoint("RIGHT", -14, 0)
+  main.sync:SetWordWrap(true); main.sync:SetJustifyV("BOTTOM"); main.sync:SetHeight(44)
+  local sync = T.button(side, "Sync now", 164, function() ns.refreshSelf(true); ReloadUI() end, "tab")
+  sync:SetPoint("BOTTOMLEFT", 18, 16)
+  main.syncButton = sync
+  -- Outside the guild the sidebar shows only this in place of the sections.
+  main.lockedNote = T.text(side, "muted")
+  main.lockedNote:SetPoint("TOPLEFT", 18, -92); main.lockedNote:SetPoint("RIGHT", -14, 0)
+  main.lockedNote:SetWordWrap(true); main.lockedNote:SetJustifyH("LEFT")
+  main.lockedNote:SetText("Guild sync, the calendar, loot and everything else unlock when you join <" .. ns.GUILD .. ">.")
+  sync:SetScript("OnEnter", function(self)
+    GameTooltip:SetOwner(self, "ANCHOR_TOP")
+    GameTooltip:AddLine("Sync now", T.C.gold[1], T.C.gold[2], T.C.gold[3])
+    GameTooltip:AddLine("Reloads your UI so WoW saves the guild's data for the Perpetua app, and loads the newest calendar and forums.", 1, 1, 1, true)
+    GameTooltip:Show()
+  end)
+  sync:SetScript("OnLeave", function() GameTooltip:Hide() end)
+
+  -- Content: page title and subtitle over a hairline, then the page.
+  main.title = T.text(main, "page"); main.title:SetPoint("TOPLEFT", 226, -24)
+  main.subtitle = T.text(main, "muted"); main.subtitle:SetPoint("TOPLEFT", main.title, "BOTTOMLEFT", 1, -4)
+  main.status = T.text(main, "muted", "RIGHT"); main.status:SetPoint("TOPRIGHT", -56, -30)
+  local close = T.closeButton(main, function() main:Hide() end)
+  close:SetPoint("TOPRIGHT", -14, -14)
+  local line = T.fill(main, "ARTWORK", T.C.gold, 0.18)
+  line:SetHeight(1); line:SetPoint("TOPLEFT", 226, -76); line:SetPoint("TOPRIGHT", -24, -76)
+
+  for _, t in ipairs(TABS) do
+    local page = CreateFrame("Frame", nil, main)
+    page:SetPoint("TOPLEFT", 226, -92)
+    page:SetPoint("BOTTOMRIGHT", -24, 20)
+    page:Hide()
+    pages[t[1]] = page
+    t[2](page)
+  end
+end
+
+local renderers = {}
+for _, t in ipairs(TABS) do renderers[t[1]] = t[3] end
+
+local lastTab -- where a member was before the window locked (they left the guild)
+function ns.showTab(name)
+  if not main then build() end
+  local locked = ns.locked()
+  if locked then name = "Welcome" elseif name == "Welcome" then name = lastTab or (not PerpetuaDB.setupSeen and "Setup") or "Guild" end
+  if name ~= "Welcome" then lastTab = name end
+  current = name
+  for n, page in pairs(pages) do
+    page:SetShown(n == name)
+    if tabs[n] then tabs[n]:SetSelected(n == name); tabs[n]:SetShown(not locked) end
+  end
+  main.syncButton:SetShown(not locked); main.sync:SetShown(not locked); main.lockedNote:SetShown(locked)
+  main.title:SetText(name:upper())
+  main.subtitle:SetText(NAV[name][2])
+  main:Show()
+  ns.refreshUI(true)
+end
+
+local pendingRefresh = false
+function ns.refreshUI(now)
+  if not (main and main:IsShown() and current) then return end
+  if not now then
+    -- Sync can deliver many updates in a row: redraw at most once a second.
+    if pendingRefresh then return end
+    pendingRefresh = true
+    C_Timer.After(1, function() pendingRefresh = false; ns.refreshUI(true) end)
+    return
+  end
+  -- Joined or left the guild while the window was open.
+  if ns.locked() ~= (current == "Welcome") then ns.showTab(current) return end
+  local n = 0
+  for _, rec in pairs(ns.players()) do if type(rec) == "table" and rec.profile then n = n + 1 end end
+  main.status:SetText(current == "Welcome" and ""
+    or (ns.guildName() and ("<" .. safe(ns.guildName()) .. ">  ·  ") or "") .. n .. " with the addon")
+  local heard = 0
+  for _ in pairs(ns.session.heard) do heard = heard + 1 end
+  main.sync:SetText("Heard from " .. heard .. " guildmates this session. " .. ns.session.received .. " updates received.")
+  local ok, err = pcall(renderers[current])
+  if not ok then main.status:SetText(color(T.HEX.danger, safe(tostring(err):sub(1, 120)))) end
+end
+ns.fire = function() ns.refreshUI() end
+function ns.currentTabForTest() return current end -- for the test harness
+
+function ns.toggle(tab)
+  if main and main:IsShown() and (not tab or tab == current) then main:Hide() return end
+  -- The first time, the setup page; after that wherever they left off.
+  ns.showTab(tab or current or (not PerpetuaDB.setupSeen and "Setup") or "Guild")
+end

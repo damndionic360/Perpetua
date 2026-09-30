@@ -1,0 +1,16 @@
+# BigWigsMods/packager config. The addon lives in Perpetua/; the rest of the repo is notes and tooling.
+package-as: Perpetua
+
+move-folders:
+  Perpetua/Perpetua: Perpetua
+
+# RELEASE_NOTES.md is this version's CHANGELOG.md section, written by the Release workflow.
+manual-changelog:
+  filename: RELEASE_NOTES.md
+  markup-type: markdown
+
+ignore:
+  - README.md
+  - CURSEFORGE.md
+  - CHANGELOG.md
+  - RELEASE_NOTES.md
