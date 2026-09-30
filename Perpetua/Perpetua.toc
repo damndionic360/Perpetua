@@ -8,6 +8,7 @@
 ## AddonCompartmentFunc: Perpetua_Toggle
 ## IconTexture: Interface\AddOns\Perpetua\Media\icon
 ## Category: Guild
+## X-Curse-Project-ID: 1718651
 
 Util.lua
 Data.lua
