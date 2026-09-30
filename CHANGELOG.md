@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.8.1
+
+### Changes
+- The **Forums** tab is switched off for now, along with `/ppta forums`. The addon no longer passes forum posts around the guild. The forums will come back when they open to members on perpetua.gg.
+
+### Fixes
+- The **Welcome** page (on characters outside the guild) no longer runs off the bottom of the window. The cards are shorter, and if they ever don't fit they scroll instead.
+
 ## 2.8.0
 
 ### Members only

@@ -2,9 +2,10 @@
 -- src/profile.html on the site.
 local _, ns = ...
 
-ns.VERSION = "2.8.0" -- keep in step with Perpetua.toc
+ns.VERSION = "2.8.1" -- keep in step with Perpetua.toc
 ns.SITE = "perpetua.gg"
 ns.GUILD = "Perpetua" -- the addon only works for characters in this guild (ns.locked)
+ns.FORUMS = false -- the Forums tab and forum sync (part "F"); off until the site's forums open to members
 
 -- quests: any one completed counts; per faction where the two sides differ. items: holding one counts.
 -- short: column heading in the Attunements tab.

@@ -12,7 +12,7 @@ local function store()
 end
 
 -- { t, boards = { { id, n, s } }, threads = { { id, b, title, by, pin, lock, n, last, posts = { { id, by, r, t, body, cut } } } } }
-function ns.forums() return store().forums end
+function ns.forums() return ns.FORUMS and store().forums or nil end
 
 function ns.forumsVersion()
   local f = ns.forums()
@@ -20,6 +20,7 @@ function ns.forumsVersion()
 end
 
 function ns.adoptForums(f)
+  if not ns.FORUMS then return false end
   if type(f) ~= "table" or not tonumber(f.t) or type(f.threads) ~= "table" or type(f.boards) ~= "table" then return false end
   local cur = ns.forums()
   if cur and (cur.t or 0) >= f.t then return false end

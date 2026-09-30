@@ -292,7 +292,7 @@ local function onMessage(text, channel, sender)
     local calT = tonumber(f[5])
     if calT and calT > (tonumber(ns.calendarVersion()) or 0) and ns.isOfficer(from) then request(from, "C", f[5]) end
     local forumT = tonumber(f[6])
-    if forumT and forumT > (tonumber(ns.forumsVersion()) or 0) and ns.isOfficer(from) then request(from, "F", f[6]) end
+    if ns.FORUMS and forumT and forumT > (tonumber(ns.forumsVersion()) or 0) and ns.isOfficer(from) then request(from, "F", f[6]) end
     ns.fire()
   elseif kind == "L" or kind == "R" then
     ns.onLootMessage(f, from)

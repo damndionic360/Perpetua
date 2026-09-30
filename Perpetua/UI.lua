@@ -1052,37 +1052,44 @@ local welcome = {}
 local function infoCard(parent, iconName, title)
   local card = CreateFrame("Frame", nil, parent)
   T.panel(card)
-  local icon = T.icon(card, "Interface\\Icons\\" .. iconName, 30)
+  local icon = T.icon(card, "Interface\\Icons\\" .. iconName, 26)
   icon:SetPoint("TOPLEFT", 14, -14)
   local h = T.text(card, "heading"); h:SetPoint("LEFT", icon, "RIGHT", 12, 0); h:SetText(title:upper())
   card.body = card:CreateFontString(nil, "OVERLAY")
   card.body:SetFontObject(T.fonts.small)
   card.body:SetJustifyH("LEFT"); card.body:SetJustifyV("TOP"); card.body:SetWordWrap(true); card.body:SetSpacing(2)
-  card.body:SetPoint("TOPLEFT", 16, -56); card.body:SetPoint("RIGHT", -16, 0)
+  card.body:SetPoint("TOPLEFT", 16, -50); card.body:SetPoint("RIGHT", -16, 0)
   function card:Fit(extra)
-    card:SetHeight(math.ceil((card.body:GetStringHeight() or 40) + 72 + (extra or 0)))
+    card:SetHeight(math.ceil((card.body:GetStringHeight() or 40) + 64 + (extra or 0)))
   end
   return card
 end
 
+local WELCOME_W = 452
+
 local function buildWelcome(page)
-  local left = CreateFrame("Frame", nil, page)
-  left:SetPoint("TOPLEFT"); left:SetPoint("BOTTOMLEFT"); left:SetWidth(452)
+  -- The cards are as tall as their wrapped text, so they sit in a scroll frame: if they ever outgrow the page they
+  -- scroll (renderWelcome shows the bar) instead of running off the bottom of the window.
+  local scroll = CreateFrame("ScrollFrame", nil, page, "UIPanelScrollFrameTemplate")
+  scroll:SetPoint("TOPLEFT"); scroll:SetPoint("BOTTOMLEFT"); scroll:SetWidth(WELCOME_W)
+  scroll.scrollBarHideable = true
+  local left = CreateFrame("Frame", nil, scroll)
+  left:SetSize(WELCOME_W, 1)
+  scroll:SetScrollChild(left)
+  welcome.scroll, welcome.left = scroll, left
   welcome.cards = {
     infoCard(left, "INV_BannerPVP_02", "Who we are"),
     infoCard(left, "INV_Misc_Note_01", "We're recruiting"),
     infoCard(left, "INV_Misc_Book_09", "About this addon"),
   }
-  welcome.cards[1].body:SetText("Perpetua is an " .. color(T.HEX.pale, "Alliance") .. " guild on the " .. color(T.HEX.pale, "PvP")
-    .. " ruleset for World of Warcraft: Forever, and a community that has been gaming together for over eight years.\n\n"
-    .. "We're about the people first. We have a strong PvE and PvP presence, including players who have competed at the highest levels of both, "
-    .. "but you don't need to be hardcore to belong here: good people and good conversation matter most.")
-  welcome.cards[2].body:SetText("We're building a raid team and a community that's still standing long after launch week, and every role is welcome.\n\n"
-    .. "Apply on " .. color(T.HEX.pale, ns.SITE) .. ", get to know us on Discord, and see if Perpetua feels like home. We'd love to meet you.")
-  welcome.cards[3].body:SetText("This is Perpetua's guild companion. Members share their gear, talents, professions, attunements and raid loot with each other, "
-    .. "see the raid calendar and the guild forums, and link their characters to " .. ns.SITE .. ".\n\n"
-    .. color(T.HEX.pale, "It only works inside the guild.") .. " Everything travels over Perpetua's private guild channel, so until you join there's nothing to show. "
-    .. "Keep it installed: the moment you're in, it unlocks by itself.")
+  welcome.cards[1].body:SetText("An " .. color(T.HEX.pale, "Alliance") .. " guild on the " .. color(T.HEX.pale, "PvP")
+    .. " ruleset for World of Warcraft: Forever, and a community that has been gaming together for over eight years. "
+    .. "People come first: we have a strong PvE and PvP presence, but you don't need to be hardcore to belong here.")
+  welcome.cards[2].body:SetText("We're building a raid team and a community that lasts well beyond launch week, and every role is welcome. "
+    .. "Apply on " .. color(T.HEX.pale, ns.SITE) .. ", get to know us on Discord, and see if Perpetua feels like home.")
+  welcome.cards[3].body:SetText("Members share gear, talents, professions, attunements and raid loot, see the raid calendar and link their characters to "
+    .. ns.SITE .. ". " .. color(T.HEX.pale, "It only works inside the guild,") .. " over Perpetua's private guild channel. "
+    .. "Keep it installed: the moment you join, it unlocks by itself.")
 
   local right = CreateFrame("Frame", nil, page)
   right:SetPoint("TOPLEFT", 468, 0); right:SetPoint("BOTTOMRIGHT")
@@ -1113,14 +1120,27 @@ local function buildWelcome(page)
   welcome.detail:SetPoint("TOPLEFT", welcome.state, "BOTTOMLEFT", 0, -8); welcome.detail:SetPoint("RIGHT", -16, 0)
 end
 
-local function renderWelcome()
+local function layoutWelcome(width)
+  welcome.scroll:SetWidth(width); welcome.left:SetWidth(width)
   local y = 0
   for _, card in ipairs(welcome.cards) do
-    card:Fit()
     card:ClearAllPoints()
     card:SetPoint("TOPLEFT", 0, -y); card:SetPoint("RIGHT", 0, 0)
+    card:Fit()
     y = y + card:GetHeight() + 12
   end
+  return y - 12
+end
+
+local function renderWelcome()
+  local room = welcome.scroll:GetHeight() or 0
+  local total = layoutWelcome(WELCOME_W)
+  local over = room > 0 and total > room
+  if over then total = layoutWelcome(WELCOME_W - 24) end -- leave room for the scroll bar
+  welcome.left:SetHeight(total)
+  local bar = welcome.scroll.ScrollBar
+  if type(bar) == "table" then bar:SetShown(over) end
+  if not over then welcome.scroll:SetVerticalScroll(0) end
   local guild = IsInGuild() and ns.guildName()
   local horde = try(UnitFactionGroup, "player") == "Horde"
   welcome.state:SetText(guild and ("IN <" .. safe(guild):upper() .. ">") or "NOT IN A GUILD")
@@ -1231,6 +1251,9 @@ local TABS = {
   { "Setup", buildSetup, renderSetup },
   { "Welcome", buildWelcome, renderWelcome, noNav = true }, -- the only page for characters outside the guild
 }
+if not ns.FORUMS then
+  for i, t in ipairs(TABS) do if t[1] == "Forums" then table.remove(TABS, i) break end end
+end
 
 local NAV = {
   Guild = { "INV_BannerPVP_02", "Everyone in the guild with the addon" },
@@ -1292,7 +1315,7 @@ local function build()
   sync:SetScript("OnEnter", function(self)
     GameTooltip:SetOwner(self, "ANCHOR_TOP")
     GameTooltip:AddLine("Sync now", T.C.gold[1], T.C.gold[2], T.C.gold[3])
-    GameTooltip:AddLine("Reloads your UI so WoW saves the guild's data for the Perpetua app, and loads the newest calendar and forums.", 1, 1, 1, true)
+    GameTooltip:AddLine("Reloads your UI so WoW saves the guild's data for the Perpetua app, and loads the newest calendar" .. (ns.FORUMS and " and forums" or "") .. ".", 1, 1, 1, true)
     GameTooltip:Show()
   end)
   sync:SetScript("OnLeave", function() GameTooltip:Hide() end)
@@ -1322,6 +1345,7 @@ for _, t in ipairs(TABS) do renderers[t[1]] = t[3] end
 local lastTab -- where a member was before the window locked (they left the guild)
 function ns.showTab(name)
   if not main then build() end
+  if not pages[name] then name = "Guild" end -- a switched-off page (ns.FORUMS)
   local locked = ns.locked()
   if locked then name = "Welcome" elseif name == "Welcome" then name = lastTab or (not PerpetuaDB.setupSeen and "Setup") or "Guild" end
   if name ~= "Welcome" then lastTab = name end

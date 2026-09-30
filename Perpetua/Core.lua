@@ -87,7 +87,6 @@ local HELP = {
   { "loot", "loot and roll history" },
   { "attune", "attunements" },
   { "crafters", "who can make what" },
-  { "forums", "the guild forums" },
   { "export", "your export for the site" },
   { "sync", "save for the Perpetua app (reloads your UI)" },
   { "minimap", "hide or show the minimap button" },
@@ -103,7 +102,7 @@ SlashCmdList.PERPETUA = function(msg)
   elseif msg == "attune" or msg == "attunements" then ns.showTab("Attunements")
   elseif msg == "raids" or msg == "calendar" then ns.showTab("Calendar")
   elseif msg == "loot" then ns.showTab("Loot")
-  elseif msg == "forums" or msg == "forum" then ns.showTab("Forums")
+  elseif ns.FORUMS and (msg == "forums" or msg == "forum") then ns.showTab("Forums")
   elseif msg == "craft" or msg == "crafters" then ns.showTab("Crafters")
   elseif msg == "minimap" then ns.toggleMinimapButton()
   elseif msg == "setup" then ns.showTab("Setup")
