@@ -10,4 +10,4 @@ Guildmates' gear, talents, professions, attunements and raid loot, shared over g
 ## Releasing
 
 Bump `## Version` in `Perpetua/Perpetua.toc`, add a section to `CHANGELOG.md`, and push to `main`.
-The Release workflow tags the version and uploads it to CurseForge and GitHub Releases. Pushes that don't change the version publish nothing.
+The Release workflow tags the version, then packages that tag and uploads it to CurseForge and GitHub Releases. Pushes that don't change the version publish nothing. Pushing a tag yourself also releases it.
