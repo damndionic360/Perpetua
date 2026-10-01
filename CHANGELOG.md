@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.8.4
+
+### Fixes
+- Joining the guild while logged in now shares your character with guildmates straight away. Before, the addon could save your character before the game had the guild's name, file it in the wrong place, and then quietly send nothing until you restarted the game.
+
 ## 2.8.3
 
 ### Fixes

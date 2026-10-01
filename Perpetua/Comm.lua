@@ -73,6 +73,9 @@ end
 -- Re-reads this character and, if anything changed, tells the guild.
 function ns.refreshSelf(quiet)
   if ns.locked() then return end
+  -- Just after joining a guild the client says we're in one before it knows the guild's name. Wait for the name:
+  -- a profile saved now would be filed under "No guild", and once the name arrives nothing would be found to send.
+  if IsInGuild() and not ns.guildName() then ns.scheduleRefresh(5) return end
   local profile = ns.collectProfile()
   local c = profile.char
   if not (c and c.name) then return end
@@ -158,7 +161,8 @@ end
 function ns.announce()
   if not (IsInGuild() and ns.selfName) or ns.locked() then return end
   local me = ns.me()
-  if not me then return end
+  -- Nothing saved for this character in this guild yet (the guild just changed): read it again, which announces.
+  if not me then ns.scheduleRefresh(2) return end
   lastAnnounce = GetTime()
   enqueue(table.concat({ "H", me.pv or "-", me.rv or "-", ns.VERSION, ns.calendarVersion and ns.calendarVersion() or "-",
     ns.forumsVersion and ns.forumsVersion() or "-" }, "\t"))
