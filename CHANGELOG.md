@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.8.3
+
+### Fixes
+- The **Setup** page's three cards (What the addon does, Why link your characters, How to link) now always show their full text. They were coming out too short, so the text ran over the next card and past the bottom of the window. The text is also a little shorter so all three fit.
+- The Setup page no longer mentions the guild forums, which are switched off for now.
+
 ## 2.8.2
 
 ### Fixes

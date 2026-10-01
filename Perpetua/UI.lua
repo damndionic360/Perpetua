@@ -929,9 +929,10 @@ end
 
 local setup = {}
 
-local function stepCard(parent, number, title)
+local function stepCard(parent, number, title, height, bottom)
   local card = CreateFrame("Frame", nil, parent)
   T.panel(card)
+  card:SetHeight(height)
   local badge = CreateFrame("Frame", nil, card)
   badge:SetSize(30, 30); badge:SetPoint("TOPLEFT", 14, -14)
   local bbg = T.fill(badge, "BACKGROUND", T.C.gold, 1); bbg:SetAllPoints()
@@ -940,30 +941,36 @@ local function stepCard(parent, number, title)
   local h = T.text(card, "heading"); h:SetPoint("LEFT", badge, "RIGHT", 12, 0); h:SetText(title:upper())
   card.body = card:CreateFontString(nil, "OVERLAY")
   card.body:SetFontObject(T.fonts.small)
-  card.body:SetJustifyH("LEFT"); card.body:SetJustifyV("TOP"); card.body:SetWordWrap(true)
-  card.body:SetPoint("TOPLEFT", 16, -54); card.body:SetPoint("RIGHT", -16, 0)
-  function card:Fit()
-    card:SetHeight(math.ceil((card.body:GetStringHeight() or 40) + 70))
-  end
+  card.body:SetJustifyH("LEFT"); card.body:SetJustifyV("TOP"); card.body:SetWordWrap(true); card.body:SetSpacing(2)
+  -- Fixed box, as on the Welcome page: GetStringHeight reports one line before the width resolves, so cards that
+  -- measured their text came out too short and the text ran over the next card and out of the window.
+  card.body:SetPoint("TOPLEFT", 16, -54); card.body:SetPoint("BOTTOMRIGHT", -16, bottom or 10)
   return card
 end
 
 local function buildSetup(page)
   local left = CreateFrame("Frame", nil, page)
   left:SetPoint("TOPLEFT"); left:SetPoint("BOTTOMLEFT"); left:SetWidth(452)
+  -- Fixed heights (519px of the page's ~528), each with a line to spare for the text measured in the addon's font.
   setup.cards = {
-    stepCard(left, "1", "What the addon does"),
-    stepCard(left, "2", "Why link your characters"),
-    stepCard(left, "3", "How to link"),
+    stepCard(left, "1", "What the addon does", 140),
+    stepCard(left, "2", "Why link your characters", 170),
+    stepCard(left, "3", "How to link", 185, 48), -- the copy button sits under the text
   }
+  local prev
+  for _, card in ipairs(setup.cards) do
+    if prev then card:SetPoint("TOPLEFT", prev, "BOTTOMLEFT", 0, -12) else card:SetPoint("TOPLEFT") end
+    card:SetPoint("RIGHT", left, "RIGHT")
+    prev = card
+  end
   setup.cards[1].body:SetText("Everyone in the guild with the addon shares their gear, talents, professions, attunements and raid loot with each other, "
-    .. "right here in game. You'll also see the raid calendar and the guild forums, and can sign up for raids with one click.")
-  setup.cards[2].body:SetText("Linking ties this WoW account to your Discord account on " .. ns.SITE .. ". Then your characters show up there under your name, "
-    .. "with their full names, gear and professions, and your raid sign-ups and loot count as yours.\n\n"
-    .. color(T.HEX.pale, "You do it once.") .. " Every character on this WoW account follows by itself, and nobody has to type surnames.")
+    .. "right here in game. You'll also see the raid calendar and can sign up for raids with one click.")
+  setup.cards[2].body:SetText("Linking ties this WoW account to your Discord account on " .. ns.SITE .. ", so your characters, raid sign-ups "
+    .. "and loot show up there under your name.\n\n"
+    .. color(T.HEX.pale, "You do it once.") .. " Every character on this WoW account follows by itself.")
   setup.cards[3].body:SetText("1.  On " .. color(T.HEX.pale, ns.SITE .. "/member") .. ", sign in with Discord and click " .. color(T.HEX.pale, "Get my link code") .. ".\n"
-    .. "2.  Type the six-letter code in the box on the right and press " .. color(T.HEX.pale, "Link") .. ".\n"
-    .. "3.  That's it. It goes through the next time an officer's computer syncs the guild, usually the same day. You don't need to stay online.")
+    .. "2.  Type the code in the box on the right and press " .. color(T.HEX.pale, "Link") .. ".\n"
+    .. "3.  Done. It goes through at the next guild sync, usually the same day.")
   setup.site = T.button(setup.cards[3], "Copy the address", 170, function() T.copyBox("Get your link code", "https://" .. ns.SITE .. "/member") end, "tab")
   setup.site:SetPoint("BOTTOMLEFT", 16, 14)
 
@@ -1009,15 +1016,6 @@ local function buildSetup(page)
 end
 
 local function renderSetup()
-  local y = 0
-  for _, card in ipairs(setup.cards) do
-    card:Fit()
-    card:ClearAllPoints()
-    card:SetPoint("TOPLEFT", 0, -y); card:SetPoint("RIGHT", 0, 0)
-    y = y + card:GetHeight() + 12
-  end
-  setup.cards[3]:SetHeight(setup.cards[3]:GetHeight() + 40) -- room for the button
-
   local cal = ns.calendar()
   local known = {}
   for _, n in ipairs(cal and cal.roster or {}) do known[n] = true end
