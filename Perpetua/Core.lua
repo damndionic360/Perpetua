@@ -109,6 +109,7 @@ SlashCmdList.PERPETUA = function(msg)
   elseif msg == "setup" then ns.showTab("Setup")
   elseif msg == "olympus on" or msg == "olympus off" then ns.olympus.set(msg == "olympus on")
   elseif msg == "olympus" then ns.showTab("Hide Olympus")
+  elseif msg == "olympus debug" then ns.olympus.debug()
   elseif msg:match("^link") then
     local code = msg:match("^link%s+(%w+)$")
     code = code and code:upper()

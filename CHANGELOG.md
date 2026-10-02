@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.9.1
+
+### Fixes
+- Hide Olympus didn't hide any chat in 2.9.0: it learned Olympus players but its chat filters never took effect. They're now set up at login through the current chat API, as other addons on this client do.
+
+### Changes
+- The Hide Olympus page shows running totals under the number of Olympus players known: messages hidden, invites turned down and trades cancelled. They're kept between sessions.
+- Olympus players are saved in a much smaller form, and the list is capped at 5,000: past that, the ones seen longest ago make room.
+- `/ppta olympus debug` shows what the chat filters have seen since login.
+
 ## 2.9.0
 
 ### New: Hide Olympus

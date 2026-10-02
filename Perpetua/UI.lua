@@ -1257,12 +1257,20 @@ local function buildOlympus(page)
   local right = CreateFrame("Frame", nil, page)
   right:SetPoint("TOPLEFT", 468, 0); right:SetPoint("BOTTOMRIGHT")
   local status = CreateFrame("Frame", nil, right)
-  status:SetPoint("TOPLEFT"); status:SetPoint("TOPRIGHT", -2, 0); status:SetHeight(250)
+  status:SetPoint("TOPLEFT"); status:SetPoint("TOPRIGHT", -2, 0); status:SetHeight(290)
   T.panel(status)
   local sh = T.text(status, "label"); sh:SetPoint("TOPLEFT", 18, -16); sh:SetText("OLYMPUS PLAYERS KNOWN")
   oly.known = T.text(status, "name"); oly.known:SetPoint("TOPLEFT", sh, "BOTTOMLEFT", 0, -8)
   oly.learned = T.text(status, "muted"); oly.learned:SetPoint("TOPLEFT", oly.known, "BOTTOMLEFT", 0, -4)
-  local th = T.text(status, "label"); th:SetPoint("TOPLEFT", oly.learned, "BOTTOMLEFT", 0, -16); th:SetText("TURNED AWAY THIS SESSION")
+  -- Running totals, three across: messages hidden, invites turned down, trades cancelled.
+  oly.totals = {}
+  for i, key in ipairs({ "messages", "invites", "trades" }) do
+    local n = T.text(status, "brand"); n:SetPoint("TOPLEFT", oly.learned, "BOTTOMLEFT", (i - 1) * 88, -14)
+    n:SetTextColor(T.C.pale[1], T.C.pale[2], T.C.pale[3])
+    local l = T.text(status, "label"); l:SetPoint("TOPLEFT", n, "BOTTOMLEFT", 0, -3); l:SetText(key:upper()); l:SetAlpha(0.8)
+    oly.totals[key] = n
+  end
+  local th = T.text(status, "label"); th:SetPoint("TOPLEFT", oly.learned, "BOTTOMLEFT", 0, -64); th:SetText("TURNED AWAY THIS SESSION")
   oly.counts = status:CreateFontString(nil, "OVERLAY")
   oly.counts:SetFontObject(T.fonts.small); oly.counts:SetJustifyH("LEFT"); oly.counts:SetJustifyV("TOP"); oly.counts:SetWordWrap(true)
   oly.counts:SetPoint("TOPLEFT", th, "BOTTOMLEFT", 0, -6); oly.counts:SetPoint("BOTTOMRIGHT", -16, 12)
@@ -1296,6 +1304,7 @@ local function renderOlympus()
   end
   oly.known:SetText(O.knownCount())
   oly.learned:SetText(O.session.learned .. " new this session")
+  for key, n in pairs(oly.totals) do n:SetText(db.totals[key] or 0) end
   local lines = {}
   for _, o in ipairs(O.OPTIONS) do
     local n = O.session.counts[o.key] or 0

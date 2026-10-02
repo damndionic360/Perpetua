@@ -23,16 +23,31 @@ O.OPTIONS = {
   { key = "trade", label = "Cancel trades", hint = "Including ones you open yourself." },
   { key = "duel", label = "Turn down duels", hint = "" },
 }
+-- The three running totals on the Hide Olympus page, kept across sessions in PerpetuaDB.olympus.totals.
+O.TOTALS = { chat = "messages", mentions = "messages", whispers = "messages", guild = "invites", party = "invites", trade = "trades" }
 O.COUNTED = { chat = "messages", mentions = "messages naming Olympus", whispers = "whispers", guild = "guild invites", party = "group invites", trade = "trades", duel = "duels" }
 
 local FORGET_AFTER = 45 * 86400 -- forget anyone not seen in Olympus for this long
+local MAX_KNOWN = 5000          -- past this, the ones seen longest ago make room
 local byGuid = {}               -- GUID -> name, for chat lines that come with a GUID
+local guildOf = {}              -- name -> guild, this session only, for "turned away ... <Olympus XIX>"
+local knownN = 0
+
+-- Each known player is saved as one short string, "<last seen> <GUID>" (the GUID when the game gave one), to keep
+-- the saved variables small. 2.9.0 saved tables, read here too.
+local function parse(v)
+  if type(v) == "table" then return tonumber(v.t), ns.text(v.id) end
+  if type(v) ~= "string" then return end
+  local t, id = v:match("^(%d+) ?(%S*)$")
+  return tonumber(t), id ~= "" and id or nil
+end
 
 function O.db()
   PerpetuaDB.olympus = PerpetuaDB.olympus or {}
   local db = PerpetuaDB.olympus
   db.opts = db.opts or {}
   db.known = db.known or {}
+  db.totals = db.totals or {}
   for _, o in ipairs(O.OPTIONS) do if db.opts[o.key] == nil then db.opts[o.key] = true end end
   return db
 end
@@ -60,9 +75,32 @@ function O.active(key)
 end
 
 function O.knownCount()
-  local n = 0
-  for _ in pairs(O.db().known) do n = n + 1 end
-  return n
+  return knownN
+end
+
+-- Drops the tenth of the list seen longest ago.
+local function makeRoom(known)
+  local all = {}
+  for name, v in pairs(known) do all[#all + 1] = { name, parse(v) or 0 } end
+  table.sort(all, function(a, b) return a[2] < b[2] end)
+  for i = 1, math.floor(MAX_KNOWN / 10) do
+    if all[i] then known[all[i][1]] = nil; knownN = knownN - 1 end
+  end
+end
+
+-- Remembers (or refreshes) an Olympus player.
+local function remember(name, guid, guild)
+  local known = O.db().known
+  local _, oldId = parse(known[name])
+  guid = guid or oldId
+  if known[name] == nil then
+    if knownN >= MAX_KNOWN then makeRoom(known) end
+    knownN = knownN + 1
+    O.session.learned = O.session.learned + 1
+  end
+  known[name] = ns.now() .. (guid and (" " .. guid) or "")
+  if guid then byGuid[guid] = name end
+  if guild then guildOf[name] = guild end
 end
 
 -- What the game told us about a player: in an Olympus guild (remember them), in another guild (forget them), or
@@ -70,17 +108,11 @@ end
 function O.note(name, guild, guid)
   if not name or name == ns.selfName then return end
   local known = O.db().known
-  local e = known[name]
   if O.isOlympus(guild) then
-    if not e then
-      e = {}
-      known[name] = e
-      O.session.learned = O.session.learned + 1
-    end
-    e.g, e.t = ns.text(guild), ns.now()
-    if guid then e.id = guid; byGuid[guid] = name end
-  elseif e and type(guild) == "string" then
+    remember(name, ns.text(guid), ns.text(guild))
+  elseif known[name] ~= nil and type(guild) == "string" then
     known[name] = nil
+    knownN = knownN - 1
   end
 end
 
@@ -129,6 +161,11 @@ local function count(key, line, who)
   if line and lastLine[key] == line then return end -- the same line passes through every chat window
   lastLine[key] = line
   O.session.counts[key] = (O.session.counts[key] or 0) + 1
+  local total = O.TOTALS[key]
+  if total then
+    local totals = O.db().totals
+    totals[total] = (totals[total] or 0) + 1
+  end
   if who and O.db().notify then
     print("|cffd4af37Perpetua|r: turned away " .. who .. ".")
   end
@@ -156,37 +193,63 @@ local function recruiting(msg, sender, guid)
   local who = guid or sender
   if try(IsGuildMember, who) or (C_FriendList and try(C_FriendList.IsFriend, who)) then return true end
   local name = ns.playerKey(ns.text(sender))
-  if name and name ~= ns.selfName and not O.db().known[name] then
-    O.db().known[name] = { g = "Olympus (whispered)", t = ns.now(), id = guid }
-    if guid then byGuid[guid] = name end
-    O.session.learned = O.session.learned + 1
-  end
+  if name and name ~= ns.selfName and O.db().known[name] == nil then remember(name, guid) end
   return true
 end
 
+-- What the filters have seen since login, for /ppta olympus debug.
+local diag = { calls = {}, unreadable = 0, hidden = 0 }
+
 -- Chat event arguments: message, sender, ..., lineID (11th), sender GUID (12th). Return true to hide the line.
 local function chatFilter(key)
-  return function(_, _, msg, sender, ...)
+  return function(_, event, msg, sender, ...)
+    diag.calls[event] = (diag.calls[event] or 0) + 1
+    if not ns.text(msg) or not ns.text(sender) then diag.unreadable = diag.unreadable + 1 end
+    diag.last = event
     if not O.active(key) then return false end
     local line, guid = select(9, ...), ns.text(select(10, ...))
     -- Recruiters whisper strangers, so a whisper also checks who's on screen and what it says.
     if O.match(sender, guid) or (key == "whispers" and (matchNow(sender, guid) or recruiting(msg, sender, guid))) then
       count(key, ns.readable(line))
+      diag.hidden = diag.hidden + 1
       return true
     end
     -- Other chat that says "Olympus" doesn't make its sender one: in trade it's mostly people asking for their layer.
     if key == "chat" and O.active("mentions") and O.isOlympus(msg) then
       count("mentions", ns.readable(line))
+      diag.hidden = diag.hidden + 1
       return true
     end
     return false
   end
 end
 
-local addFilter = ChatFrame_AddMessageEventFilter or (ChatFrameUtil and ChatFrameUtil.AddMessageEventFilter)
-for key, list in pairs(CHAT) do
-  local f = chatFilter(key)
-  for _, e in ipairs(list) do try(addFilter, e, f) end
+-- Added at login, when the chat frames are sure to be loaded, the way other addons on this client do it.
+local function addFilters()
+  if diag.api then return end
+  local add = ChatFrameUtil and ChatFrameUtil.AddMessageEventFilter
+  diag.api = add and "ChatFrameUtil" or "ChatFrame_AddMessageEventFilter"
+  add = add or ChatFrame_AddMessageEventFilter
+  diag.added, diag.failed = 0, nil
+  for key, list in pairs(CHAT) do
+    local f = chatFilter(key)
+    for _, e in ipairs(list) do
+      local ok, err = pcall(add, e, f)
+      if ok then diag.added = diag.added + 1 else diag.failed = diag.failed or tostring(err) end
+    end
+  end
+end
+
+function O.debug()
+  local p = function(s) print("|cffd4af37Perpetua|r Olympus: " .. s) end
+  local db = O.db()
+  p(string.format("on=%s locked=%s chat=%s mentions=%s whispers=%s known=%d", tostring(db.on), tostring(ns.locked()),
+    tostring(O.active("chat")), tostring(O.active("mentions")), tostring(O.active("whispers")), knownN))
+  p(string.format("filters: %s, %d added%s", tostring(diag.api), diag.added or 0, diag.failed and (", error: " .. diag.failed) or ""))
+  local seen = {}
+  for e, n in pairs(diag.calls) do seen[#seen + 1] = e:gsub("CHAT_MSG_", "") .. "=" .. n end
+  table.sort(seen)
+  p("lines seen: " .. (#seen > 0 and table.concat(seen, " ") or "none") .. string.format("; hidden %d; unreadable %d", diag.hidden, diag.unreadable))
 end
 
 -- ---------- invites, trades, duels ----------
@@ -196,8 +259,7 @@ local function display(name, guild)
 end
 
 local function knownGuild(name)
-  local e = O.db().known[ns.playerKey(ns.text(name)) or ""]
-  return e and e.g
+  return guildOf[ns.playerKey(ns.text(name)) or ""]
 end
 
 function O.onEvent(event, ...)
@@ -267,12 +329,22 @@ for _, e in ipairs({ "PLAYER_LOGIN", "NAME_PLATE_UNIT_ADDED", "UPDATE_MOUSEOVER_
 end
 events:SetScript("OnEvent", function(_, event, ...)
   if event == "PLAYER_LOGIN" then
-    -- Forget anyone not seen in Olympus for a while; index the rest by GUID.
+    addFilters()
+    -- Forget anyone not seen in Olympus for a while; index the rest by GUID (and turn 2.9.0's tables into strings).
     local cutoff = ns.now() - FORGET_AFTER
-    for name, e in pairs(O.db().known) do
-      if type(e) ~= "table" or (e.t or 0) < cutoff then O.db().known[name] = nil
-      elseif e.id then byGuid[e.id] = name end
+    local known = O.db().known
+    knownN = 0
+    for name, v in pairs(known) do
+      local t, id = parse(v)
+      if not t or t < cutoff then
+        known[name] = nil
+      else
+        knownN = knownN + 1
+        if type(v) == "table" then known[name] = t .. (id and (" " .. id) or "") end
+        if id then byGuid[id] = name end
+      end
     end
+    if knownN > MAX_KNOWN then makeRoom(known) end
     return
   end
   local ok, err = pcall(O.onEvent, event, ...)
