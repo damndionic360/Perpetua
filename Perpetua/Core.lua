@@ -90,6 +90,7 @@ local HELP = {
   { "export", "your export for the site" },
   { "sync", "save for the Perpetua app (reloads your UI)" },
   { "minimap", "hide or show the minimap button" },
+  { "olympus [on|off]", "hide chat and invites from Olympus guilds" },
 }
 SlashCmdList.PERPETUA = function(msg)
   msg = (msg or ""):lower():match("^%s*(.-)%s*$")
@@ -106,6 +107,8 @@ SlashCmdList.PERPETUA = function(msg)
   elseif msg == "craft" or msg == "crafters" then ns.showTab("Crafters")
   elseif msg == "minimap" then ns.toggleMinimapButton()
   elseif msg == "setup" then ns.showTab("Setup")
+  elseif msg == "olympus on" or msg == "olympus off" then ns.olympus.set(msg == "olympus on")
+  elseif msg == "olympus" then ns.showTab("Hide Olympus")
   elseif msg:match("^link") then
     local code = msg:match("^link%s+(%w+)$")
     code = code and code:upper()

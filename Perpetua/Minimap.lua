@@ -68,6 +68,8 @@ function ns.createMinimapButton()
     local n = 0
     for _, rec in pairs(ns.players()) do if type(rec) == "table" and rec.profile then n = n + 1 end end
     GameTooltip:AddLine(n .. " guildmates with the addon", 1, 1, 1)
+    local update = ns.updateAvailable()
+    if update then GameTooltip:AddLine("Update available: " .. update, 0.95, 0.84, 0.55) end
     GameTooltip:AddLine("Left-click: guild, characters, attunements, crafters", 0.64, 0.67, 0.79)
     GameTooltip:AddLine("Right-click: your export for " .. ns.SITE, 0.64, 0.67, 0.79)
     GameTooltip:AddLine("Drag to move · /perpetua minimap to hide", 0.64, 0.67, 0.79)

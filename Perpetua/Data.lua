@@ -2,10 +2,15 @@
 -- src/profile.html on the site.
 local _, ns = ...
 
-ns.VERSION = "2.8.1" -- keep in step with Perpetua.toc
+-- From Perpetua.toc's ## Version, so it can't fall behind (2.8.2-2.8.4 shipped saying "2.8.1", which hid every
+-- update notice). The fallback is only for clients without the metadata API.
+ns.VERSION = (C_AddOns and C_AddOns.GetAddOnMetadata or GetAddOnMetadata or function() end)("Perpetua", "Version") or "2.9.0"
 ns.SITE = "perpetua.gg"
 ns.GUILD = "Perpetua" -- the addon only works for characters in this guild (ns.locked)
 ns.FORUMS = false -- the Forums tab and forum sync (part "F"); off until the site's forums open to members
+-- Hide Olympus (Olympus.lua): guilds whose name contains any of these (lower case) count as Olympus.
+ns.OLYMPUS = { "olympus" }
+ns.OLYMPUS_WHO = "Olympus" -- the guild part of the /who searches
 
 -- quests: any one completed counts; per faction where the two sides differ. items: holding one counts.
 -- short: column heading in the Attunements tab.

@@ -54,6 +54,7 @@ Raid events with in-game sign-ups, and a read-only copy of the guild forums, pas
 | `/ppta forums` | The guild forums |
 | `/ppta setup` | Link your characters to the guild website |
 | `/ppta minimap` | Hide or show the minimap button |
+| `/ppta olympus` | Hide Olympus: choose what to hide from Olympus guilds (`on` / `off` to flip it) |
 | `/ppta help` | List all commands |
 
 `/perpetua` and `/perp` work too.

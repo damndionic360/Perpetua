@@ -1215,6 +1215,95 @@ function ns.renderExport(focus)
   if focus then export.edit:SetFocus(); export.edit:HighlightText() end
 end
 
+-- ---------- Hide Olympus page ----------
+-- Opened from "Hide Olympus" above Sync now in the sidebar (Olympus.lua does the hiding). The sidebar switch turns
+-- everything on or off; here each part can be switched off on its own.
+
+local oly = {}
+
+local function buildOlympus(page)
+  local O = ns.olympus
+  local left = CreateFrame("Frame", nil, page)
+  left:SetPoint("TOPLEFT"); left:SetPoint("BOTTOMLEFT"); left:SetWidth(452)
+  T.panel(left)
+  local h = T.text(left, "heading"); h:SetPoint("TOPLEFT", 18, -18); h:SetText("HIDE OLYMPUS")
+  oly.switch = T.switch(left, O.set)
+  oly.switch:SetPoint("TOPRIGHT", -18, -16)
+  oly.state = T.text(left, "muted", "RIGHT"); oly.state:SetPoint("RIGHT", oly.switch, "LEFT", -10, 0)
+  local intro = left:CreateFontString(nil, "OVERLAY")
+  intro:SetFontObject(T.fonts.small); intro:SetJustifyH("LEFT"); intro:SetJustifyV("TOP"); intro:SetWordWrap(true)
+  intro:SetPoint("TOPLEFT", 18, -46); intro:SetPoint("RIGHT", -18, 0); intro:SetHeight(58)
+  intro:SetText("For players in any guild with " .. color(T.HEX.pale, "Olympus") .. " in its name. It all happens on your screen: "
+    .. "nobody goes on your ignore list and they can't tell.")
+  oly.checks = {}
+  local function check(key, label, hint, y, indent)
+    local c = CreateFrame("CheckButton", nil, left, "UICheckButtonTemplate")
+    c:SetSize(24, 24); c:SetPoint("TOPLEFT", 14 + (indent or 0), y)
+    local l = T.text(left, "body"); l:SetPoint("TOPLEFT", c, "TOPRIGHT", 4, -3); l:SetText(label)
+    local d = T.text(left, "muted"); d:SetPoint("TOPLEFT", l, "BOTTOMLEFT", 0, -2); d:SetPoint("RIGHT", -18, 0); d:SetText(hint or "")
+    oly.checks[#oly.checks + 1] = { key = key, check = c, label = l, hint = d }
+    return c
+  end
+  local y = -108
+  for _, o in ipairs(O.OPTIONS) do
+    local c = check(o.key, o.label, o.hint, y, o.parent and 26)
+    oly.checks[#oly.checks].parent = o.parent
+    c:SetScript("OnClick", function(self) O.setOption(o.key, self:GetChecked()) end)
+    y = y - (o.hint ~= "" and (o.parent and 46 or 52) or 36)
+  end
+  local n = check("notify", "Tell me in chat when something's turned away", "Invites, trades and duels. Hidden chat is only counted.", y - 6)
+  n:SetScript("OnClick", function(self) O.db().notify = self:GetChecked() and true or false end)
+
+  local right = CreateFrame("Frame", nil, page)
+  right:SetPoint("TOPLEFT", 468, 0); right:SetPoint("BOTTOMRIGHT")
+  local status = CreateFrame("Frame", nil, right)
+  status:SetPoint("TOPLEFT"); status:SetPoint("TOPRIGHT", -2, 0); status:SetHeight(250)
+  T.panel(status)
+  local sh = T.text(status, "label"); sh:SetPoint("TOPLEFT", 18, -16); sh:SetText("OLYMPUS PLAYERS KNOWN")
+  oly.known = T.text(status, "name"); oly.known:SetPoint("TOPLEFT", sh, "BOTTOMLEFT", 0, -8)
+  oly.learned = T.text(status, "muted"); oly.learned:SetPoint("TOPLEFT", oly.known, "BOTTOMLEFT", 0, -4)
+  local th = T.text(status, "label"); th:SetPoint("TOPLEFT", oly.learned, "BOTTOMLEFT", 0, -16); th:SetText("TURNED AWAY THIS SESSION")
+  oly.counts = status:CreateFontString(nil, "OVERLAY")
+  oly.counts:SetFontObject(T.fonts.small); oly.counts:SetJustifyH("LEFT"); oly.counts:SetJustifyV("TOP"); oly.counts:SetWordWrap(true)
+  oly.counts:SetPoint("TOPLEFT", th, "BOTTOMLEFT", 0, -6); oly.counts:SetPoint("BOTTOMRIGHT", -16, 12)
+
+  local lookup = T.button(right, "Look them up", 170, function()
+    local i = O.lookUp()
+    oly.lookupNote:SetText("Searched " .. i .. " of " .. O.WHO_TOTAL .. ". Click for the next.")
+  end, "tab")
+  lookup:SetPoint("TOPLEFT", status, "BOTTOMLEFT", 0, -14)
+  oly.lookupNote = T.text(right, "muted"); oly.lookupNote:SetPoint("TOPLEFT", lookup, "BOTTOMLEFT", 2, -6); oly.lookupNote:SetPoint("RIGHT", -4, 0)
+  oly.lookupNote:SetText("A /who for Olympus players, 50 a click.")
+  local how = right:CreateFontString(nil, "OVERLAY")
+  how:SetFontObject(T.fonts.muted); how:SetJustifyH("LEFT"); how:SetJustifyV("TOP"); how:SetWordWrap(true)
+  how:SetPoint("TOPLEFT", oly.lookupNote, "BOTTOMLEFT", 0, -14); how:SetPoint("BOTTOMRIGHT", -6, 4)
+  how:SetText(color(T.HEX.gold, "HOW IT KNOWS") .. "\nThe game only shows someone's guild when you see them: nameplates, "
+    .. "mouseover, target, your group, a trade or an invite. Everyone spotted is remembered; chat from someone not seen "
+    .. "yet still shows until they are. Your own /who searches teach it too.")
+end
+
+local function renderOlympus()
+  local O = ns.olympus
+  local db = O.db()
+  oly.switch:SetOn(db.on)
+  oly.state:SetText(db.on and color(T.HEX.ok, "On") or "Off")
+  for _, c in ipairs(oly.checks) do
+    if c.key == "notify" then c.check:SetChecked(db.notify and true or false) else c.check:SetChecked(db.opts[c.key] ~= false) end
+    local on = db.on and not (c.parent and db.opts[c.parent] == false)
+    c.check:SetEnabled(on and true or false)
+    local a = on and 1 or 0.45
+    c.label:SetAlpha(a); c.hint:SetAlpha(a)
+  end
+  oly.known:SetText(O.knownCount())
+  oly.learned:SetText(O.session.learned .. " new this session")
+  local lines = {}
+  for _, o in ipairs(O.OPTIONS) do
+    local n = O.session.counts[o.key] or 0
+    if n > 0 then lines[#lines + 1] = color(T.HEX.pale, n) .. "  " .. O.COUNTED[o.key] end
+  end
+  oly.counts:SetText(#lines > 0 and table.concat(lines, "\n") or color(T.HEX.muted, db.on and "Nothing yet." or "Switched off."))
+end
+
 -- ---------- window ----------
 
 local TABS = {
@@ -1228,6 +1317,7 @@ local TABS = {
   { "Export", buildExport, function() ns.renderExport() end },
   { "Setup", buildSetup, renderSetup },
   { "Welcome", buildWelcome, renderWelcome, noNav = true }, -- the only page for characters outside the guild
+  { "Hide Olympus", buildOlympus, renderOlympus, noNav = true }, -- opened from its row above Sync now
 }
 if not ns.FORUMS then
   for i, t in ipairs(TABS) do if t[1] == "Forums" then table.remove(TABS, i) break end end
@@ -1244,6 +1334,7 @@ local NAV = {
   Export = { "INV_Scroll_05", "Your profile for the site" },
   Setup = { "INV_Misc_Book_09", "Link your characters to perpetua.gg" },
   Welcome = { "INV_BannerPVP_02", "The guild companion for Perpetua members" },
+  ["Hide Olympus"] = { "INV_Shield_06", "Hide chat, invites, trades and duels from Olympus guilds" },
 }
 
 local function build()
@@ -1280,11 +1371,32 @@ local function build()
     end
   end
   main.sync = T.text(side, "muted")
-  main.sync:SetPoint("BOTTOMLEFT", 18, 54); main.sync:SetPoint("RIGHT", -14, 0)
+  main.sync:SetPoint("BOTTOMLEFT", 18, 96); main.sync:SetPoint("RIGHT", -14, 0)
   main.sync:SetWordWrap(true); main.sync:SetJustifyV("BOTTOM"); main.sync:SetHeight(44)
+  main.update = T.text(side, "tagline"); main.update:SetPoint("BOTTOMLEFT", main.sync, "TOPLEFT", 0, 6)
   local sync = T.button(side, "Sync now", 164, function() ns.refreshSelf(true); ReloadUI() end, "tab")
-  sync:SetPoint("BOTTOMLEFT", 18, 16)
+  sync:SetPoint("BOTTOMLEFT", 18, 24)
   main.syncButton = sync
+  local version = T.text(side, "muted"); version:SetPoint("TOP", sync, "BOTTOM", 0, -3)
+  version:SetText("v" .. ns.VERSION); version:SetAlpha(0.55)
+  -- Hide Olympus: the switch turns it all on or off, the label opens its page.
+  local oly = CreateFrame("Frame", nil, side)
+  oly:SetPoint("BOTTOMLEFT", 18, 60); oly:SetSize(164, 26)
+  local olyLabel = CreateFrame("Button", nil, oly)
+  olyLabel:SetPoint("TOPLEFT"); olyLabel:SetPoint("BOTTOMRIGHT", -44, 0)
+  olyLabel.text = T.text(olyLabel, "nav"); olyLabel.text:SetPoint("LEFT", 0, 0); olyLabel.text:SetText("HIDE OLYMPUS")
+  olyLabel:SetScript("OnClick", function() ns.showTab("Hide Olympus") end)
+  olyLabel:SetScript("OnEnter", function(self)
+    self.text:SetTextColor(T.C.pale[1], T.C.pale[2], T.C.pale[3])
+    GameTooltip:SetOwner(self, "ANCHOR_TOP")
+    GameTooltip:AddLine("Hide Olympus", T.C.gold[1], T.C.gold[2], T.C.gold[3])
+    GameTooltip:AddLine("Hides chat from players in Olympus guilds and turns away their whispers, invites, trades and duels. Click to choose which.", 1, 1, 1, true)
+    GameTooltip:Show()
+  end)
+  olyLabel:SetScript("OnLeave", function(self) self.text:SetTextColor(T.C.text[1], T.C.text[2], T.C.text[3]); GameTooltip:Hide() end)
+  main.olySwitch = T.switch(oly, ns.olympus.set)
+  main.olySwitch:SetPoint("RIGHT", 0, 0)
+  main.olyRow = oly
   -- Outside the guild the sidebar shows only this in place of the sections.
   main.lockedNote = T.text(side, "muted")
   main.lockedNote:SetPoint("TOPLEFT", 18, -92); main.lockedNote:SetPoint("RIGHT", -14, 0)
@@ -1332,7 +1444,7 @@ function ns.showTab(name)
     page:SetShown(n == name)
     if tabs[n] then tabs[n]:SetSelected(n == name); tabs[n]:SetShown(not locked) end
   end
-  main.syncButton:SetShown(not locked); main.sync:SetShown(not locked); main.lockedNote:SetShown(locked)
+  main.syncButton:SetShown(not locked); main.sync:SetShown(not locked); main.olyRow:SetShown(not locked); main.lockedNote:SetShown(locked)
   main.title:SetText(name:upper())
   main.subtitle:SetText(NAV[name][2])
   main:Show()
@@ -1357,6 +1469,9 @@ function ns.refreshUI(now)
     or (ns.guildName() and ("<" .. safe(ns.guildName()) .. ">  ·  ") or "") .. n .. " with the addon")
   local heard = 0
   for _ in pairs(ns.session.heard) do heard = heard + 1 end
+  main.olySwitch:SetOn(ns.olympus.db().on)
+  local update = not ns.locked() and ns.updateAvailable()
+  main.update:SetText(update and ("Update available: " .. safe(update)) or "")
   main.sync:SetText("Heard from " .. heard .. " guildmates this session. " .. ns.session.received .. " updates received.")
   local ok, err = pcall(renderers[current])
   if not ok then main.status:SetText(color(T.HEX.danger, safe(tostring(err):sub(1, 120)))) end

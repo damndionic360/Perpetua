@@ -211,6 +211,32 @@ function T.button(parent, label, width, onClick, kind)
   return b
 end
 
+-- On/off switch: an outlined track with a square knob, filled gold with the knob on the right when on.
+-- onChange(on) gets the state a click asks for; the caller saves it and calls SetOn.
+function T.switch(parent, onChange)
+  local b = CreateFrame("Button", nil, parent)
+  b:SetSize(36, 18)
+  b.track = T.fill(b, "BACKGROUND", C.midnight, 1)
+  b.track:SetAllPoints()
+  b.edge = T.outline(b, 0, C.gold, 0.55)
+  b.knob = T.fill(b, "ARTWORK", C.muted, 1)
+  b.knob:SetSize(12, 12)
+  local hl = b:CreateTexture(nil, "HIGHLIGHT")
+  hl:SetAllPoints(); hl:SetTexture(WHITE); hl:SetVertexColor(C.pale[1], C.pale[2], C.pale[3], 0.15)
+  function b:SetOn(on)
+    self.on = on and true or false
+    local track, knob = on and C.gold or C.midnight, on and C.navy or C.muted
+    self.track:SetVertexColor(track[1], track[2], track[3], 1)
+    self.knob:SetVertexColor(knob[1], knob[2], knob[3], 1)
+    self.knob:ClearAllPoints()
+    self.knob:SetPoint(on and "RIGHT" or "LEFT", on and -3 or 3, 0)
+    self.edge:SetColor(on and C.pale or C.gold, on and 1 or 0.55)
+  end
+  b:SetOn(false)
+  b:SetScript("OnClick", function(self) onChange(not self.on) end)
+  return b
+end
+
 -- Search box: midnight field with a gold hairline, placeholder text while empty.
 function T.searchBox(parent, width, placeholder, onChange)
   local e = CreateFrame("EditBox", nil, parent)

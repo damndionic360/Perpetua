@@ -1,5 +1,29 @@
 # Changelog
 
+## 2.9.0
+
+### New: Hide Olympus
+- A **Hide Olympus** switch above **Sync now** hides players in any guild with "Olympus" in its name. It starts off.
+- Click the words **Hide Olympus** to choose what it does. All of these are on until you untick them:
+  - Hide their chat: say, yell, emotes, every channel, and party and raid chat.
+    - Hide any chat that says "Olympus", from anyone (like trade asking for an Olympus layer).
+  - Hide their whispers, plus any whisper that says "Olympus", from anyone.
+  - Turn down their guild invites, and Olympus guild charters.
+  - Turn down their group invites.
+  - Cancel trades with them.
+  - Turn down their duels.
+- Optionally, a line in chat whenever an invite, trade or duel is turned away.
+- Nothing goes on your ignore list and they can't tell. Switch it off and everything shows again.
+- The game only shows someone's guild when you see them (nameplates, mouseover, target, your group, trades, invites and /who), so the addon remembers each Olympus player it spots. A whisper from an Olympus player standing nearby is hidden too, and so is anyone who whispers you about Olympus, from then on. Other chat from someone it hasn't seen yet still shows. **Look them up** on the Hide Olympus page runs a /who for Olympus players, 50 per click.
+- `/ppta olympus` opens the page; `/ppta olympus on` and `/ppta olympus off` flip the switch.
+
+### Update notice
+- When a guildmate has a newer version of the addon, you'll see **Update available** in the window's sidebar and in the minimap button's tooltip, plus one line in chat per new version.
+- The addon's version now shows under **Sync now**.
+
+### Fixes
+- Update notices never showed: versions 2.8.2 to 2.8.4 told guildmates they were 2.8.1. The addon now reads its version from its own files.
+
 ## 2.8.4
 
 ### Fixes

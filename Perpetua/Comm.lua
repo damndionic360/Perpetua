@@ -164,7 +164,7 @@ function ns.announce()
   -- Nothing saved for this character in this guild yet (the guild just changed): read it again, which announces.
   if not me then ns.scheduleRefresh(2) return end
   lastAnnounce = GetTime()
-  enqueue(table.concat({ "H", me.pv or "-", me.rv or "-", ns.VERSION, ns.calendarVersion and ns.calendarVersion() or "-",
+  enqueue(table.concat({ "H", me.pv or "-", me.rv or "-", ns.announcedVersion(), ns.calendarVersion and ns.calendarVersion() or "-",
     ns.forumsVersion and ns.forumsVersion() or "-" }, "\t"))
 end
 
@@ -267,6 +267,33 @@ local function accept(from, part, version, s)
   ns.fire()
 end
 
+-- Update notice. A guildmate's hello carries their addon version; the newest one seen is kept (PerpetuaDB.newest)
+-- so the notice still shows after a relog, until this install catches up. It shows in the sidebar and the minimap
+-- tooltip, and once per new version in chat.
+-- A test install has "-dev" on its version (in the installed Perpetua.toc only) and announces "dev" instead, so
+-- guildmates aren't told about a release that isn't out. A version nobody has announced for 14 days is dropped,
+-- so one modified addon can't leave a notice up for good.
+ns.DEV = ns.VERSION:find("-dev", 1, true) ~= nil
+function ns.announcedVersion() return ns.DEV and "dev" or ns.VERSION end
+
+function ns.updateAvailable()
+  local v = PerpetuaDB.newest
+  if v and ns.newer(v, ns.VERSION) and ns.now() - (PerpetuaDB.newestAt or 0) < 14 * 86400 then return v end
+end
+
+function ns.noteVersion(v)
+  v = ns.text(v)
+  if not v or not v:match("^%d+%.%d+[%.%d]*$") then return end
+  if v == PerpetuaDB.newest then PerpetuaDB.newestAt = ns.now() return end
+  if not ns.newer(v, ns.VERSION) or (ns.updateAvailable() and not ns.newer(v, PerpetuaDB.newest)) then return end
+  PerpetuaDB.newest, PerpetuaDB.newestAt = v, ns.now()
+  if ns.newer(v, ns.VERSION) and PerpetuaDB.toldNewest ~= v then
+    PerpetuaDB.toldNewest = v
+    print("|cffd4af37Perpetua|r: version " .. ns.safe(v) .. " is out (you have " .. ns.VERSION .. "). Update through CurseForge or " .. ns.SITE .. "/addon.")
+  end
+  ns.refreshUI()
+end
+
 local function onMessage(text, channel, sender)
   if channel ~= "GUILD" or type(text) ~= "string" or ns.locked() then return end
   local from = ns.playerKey(sender)
@@ -277,12 +304,8 @@ local function onMessage(text, channel, sender)
     local players = ns.players()
     local rec = players[from] or {}
     players[from] = rec
-    rec.heard, rec.addon = ns.now(), f[4]
-    -- Someone has a newer addon than ours: say so once a session.
-    if f[4] and ns.newer(f[4], ns.VERSION) and not ns.session.toldNewer then
-      ns.session.toldNewer = true
-      print("|cffd4af37Perpetua|r: " .. ns.safe(from) .. " has a newer version of the addon (" .. ns.safe(f[4]) .. "). Get it at " .. ns.SITE .. "/addon")
-    end
+    rec.heard, rec.addon = ns.now(), f[4] ~= "dev" and f[4] or rec.addon -- a test install says "dev"
+    ns.noteVersion(f[4])
     -- Someone new this session: answer with our own hello so they can catch up on us too.
     if not ns.session.heard[from] then
       ns.session.heard[from] = true
