@@ -42,6 +42,11 @@ local function scan()
   ns.players() -- makes sure PerpetuaDB.guilds[guild] exists
   local g = PerpetuaDB.guilds[guild]
   g.roster, g.rosterAt = roster, now
+  -- Raise the level on players we have a profile for (the profile itself is theirs and stays as sent).
+  for name, rec in pairs(g.players or {}) do
+    local r = roster[name]
+    if type(rec) == "table" and r and r.l > (rec.level or 0) then rec.level = r.l end
+  end
   try(ns.refreshUI)
 end
 
