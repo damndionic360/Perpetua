@@ -95,7 +95,8 @@ local function List(parent, cols, onSort)
       r.cells[c] = fs
       cx = cx + col[2] + 8
     end
-    r:SetScript("OnClick", function(self) if self.data and self.data.onClick then self.data.onClick(self.data) end end)
+    r:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+    r:SetScript("OnClick", function(self, button) if self.data and self.data.onClick then self.data.onClick(self.data, button, self) end end)
     r:SetScript("OnEnter", function(self) if self.data and self.data.onEnter then self.data.onEnter(self, self.data) end end)
     r:SetScript("OnLeave", function() GameTooltip:Hide() end)
     L.rows[i] = r
@@ -115,6 +116,8 @@ local function List(parent, cols, onSort)
   end
   return L
 end
+
+ns.List = List -- GuildUI.lua's roster uses it too
 
 -- ---------- text canvas (Character tab) ----------
 -- Two scrolling columns of lines; item lines are buttons with the item's tooltip.
@@ -223,7 +226,7 @@ end
 
 -- ---------- Guild tab ----------
 
-local guild = { sort = 2, desc = true, filter = "", roster = false, onlineOnly = false, alts = false }
+local guild = { sort = 2, desc = true, filter = "", roster = false, onlineOnly = false, alts = false, view = "roster" }
 
 local function professionsText(p)
   local out = {}
@@ -286,8 +289,28 @@ local function accountGroups(names)
 end
 
 local function buildGuild(page)
-  local search = T.searchBox(page, 240, "Search names, specs, professions…", function(t) guild.filter = t:lower(); ns.refreshUI() end)
-  search:SetPoint("TOPLEFT", 2, 0)
+  -- Two views: Roster (everyone, with rank, notes and the officer tools, like Blizzard's guild window) and
+  -- Perpetua (what guild sync knows: specs, gear, professions, raids).
+  guild.view = PerpetuaDB.guildView == "perpetua" and "perpetua" or "roster"
+  local viewTabs = {}
+  local function setView(v)
+    guild.view = v
+    PerpetuaDB.guildView = v
+    for k, b in pairs(viewTabs) do b:SetSelected(k == v) end
+    ns.refreshUI(true)
+  end
+  viewTabs.roster = T.button(page, "Roster", 86, function() setView("roster") end, "tab")
+  viewTabs.perpetua = T.button(page, "Perpetua", 86, function() setView("perpetua") end, "tab")
+  viewTabs.roster:SetPoint("TOPLEFT", 2, 0)
+  viewTabs.perpetua:SetPoint("LEFT", viewTabs.roster, "RIGHT", 6, 0)
+  for k, b in pairs(viewTabs) do b:SetSelected(k == guild.view) end
+  local bar = CreateFrame("Frame", nil, page)
+  bar:SetPoint("TOPLEFT", viewTabs.perpetua, "TOPRIGHT", 12, 0); bar:SetPoint("TOPRIGHT"); bar:SetHeight(28)
+
+  local perpetuaControls = {}
+  local search = T.searchBox(bar, 160, "Search names, specs, professions…", function(t) guild.filter = t:lower(); ns.refreshUI() end)
+  search:SetPoint("TOPLEFT", 0, 0)
+  perpetuaControls[1] = search
   -- Filters, right to left.
   local function toggle(label, key, after)
     local check = CreateFrame("CheckButton", nil, page, "UICheckButtonTemplate")
@@ -305,13 +328,22 @@ local function buildGuild(page)
   local c3, t3 = toggle("Without the addon", "roster", askRoster)
   local c2, t2 = toggle("Alts separately", "alts")
   local c1, t1 = toggle("Online now", "onlineOnly", askRoster)
+  for _, c in ipairs({ c1, t1, c2, t2, c3, t3 }) do perpetuaControls[#perpetuaControls + 1] = c end
+  guild.perpetuaControls = perpetuaControls
   t3:SetPoint("TOPRIGHT", -26, -5); c3:SetPoint("RIGHT", t3, "LEFT", -2, 0)
   t2:SetPoint("RIGHT", c3, "LEFT", -12, 0); c2:SetPoint("RIGHT", t2, "LEFT", -2, 0)
   t1:SetPoint("RIGHT", c2, "LEFT", -12, 0); c1:SetPoint("RIGHT", t1, "LEFT", -2, 0)
 
+  local rosterArea = CreateFrame("Frame", nil, page)
+  rosterArea:SetPoint("TOPLEFT", 0, -38)
+  rosterArea:SetPoint("BOTTOMRIGHT")
+  ns.buildRoster(rosterArea, bar)
+  guild.rosterArea = rosterArea
+
   local area = CreateFrame("Frame", nil, page)
   area:SetPoint("TOPLEFT", 0, -38)
   area:SetPoint("BOTTOMRIGHT")
+  guild.area = area
   guild.list = List(area, {
     { "Name", 190 }, { "Lvl", 30, "RIGHT" }, { "Spec", 130 }, { "iLvl", 34, "RIGHT" },
     { "Professions", 150 }, { "Raids", 80 }, { "Updated", 66, "RIGHT" },
@@ -322,6 +354,12 @@ local function buildGuild(page)
 end
 
 local function renderGuild()
+  local roster = guild.view == "roster"
+  guild.rosterArea:SetShown(roster)
+  guild.area:SetShown(not roster)
+  for _, c in ipairs(guild.perpetuaControls) do c:SetShown(not roster) end
+  ns.showRosterControls(roster)
+  if roster then return ns.renderRoster() end
   local online = onlineNow()
   local all = everyone(guild.roster)
   local byName, names = {}, {}
@@ -1317,6 +1355,7 @@ end
 
 local TABS = {
   { "Guild", buildGuild, renderGuild },
+  { "Guild Info", function(page) ns.buildGuildInfo(page) end, function() ns.renderGuildInfo() end },
   { "Character", buildCharacter, renderCharacter },
   { "Calendar", buildCalendar, renderCalendar },
   { "Attunements", buildAttunements, renderAttunements },
@@ -1333,7 +1372,8 @@ if not ns.FORUMS then
 end
 
 local NAV = {
-  Guild = { "INV_BannerPVP_02", "Everyone in the guild with the addon" },
+  Guild = { "INV_BannerPVP_02", "The guild roster, ranks and notes, and what guild sync knows" },
+  ["Guild Info"] = { "INV_Misc_Note_01", "Message of the day, guild information and the guild log" },
   Character = { "INV_Chest_Plate16", "Gear, talents, professions and more" },
   Calendar = { "INV_Misc_PocketWatch_01", "Upcoming raids and who's coming" },
   Attunements = { "INV_Misc_Key_14", "Who can get in where" },

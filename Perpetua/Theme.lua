@@ -330,3 +330,92 @@ function T.copyBox(title, url)
   copyBox.field:SetFocus()
   copyBox.field:HighlightText()
 end
+
+-- A small modal dialog in the window's style, used instead of Blizzard's StaticPopups (which addon code would
+-- taint). opts: title, text, accept (button label), input = { text, maxLetters, multiline, height },
+-- onAccept(value) (value is the input's text when there is one). Only one is open at a time.
+local dialog
+function T.dialog(opts)
+  if not dialog then
+    local f = CreateFrame("Frame", "PerpetuaDialog", UIParent)
+    f:SetFrameStrata("FULLSCREEN_DIALOG")
+    f:SetToplevel(true)
+    f:EnableMouse(true)
+    f:SetMovable(true)
+    f:RegisterForDrag("LeftButton")
+    f:SetScript("OnDragStart", f.StartMoving)
+    f:SetScript("OnDragStop", f.StopMovingOrSizing)
+    f:SetClampedToScreen(true)
+    T.window(f)
+    tinsert(UISpecialFrames, "PerpetuaDialog")
+    f.title = T.text(f, "heading")
+    f.title:SetPoint("TOPLEFT", 22, -20); f.title:SetPoint("RIGHT", -22, 0)
+    f.body = T.text(f, "body")
+    f.body:SetPoint("TOPLEFT", f.title, "BOTTOMLEFT", 0, -10); f.body:SetPoint("RIGHT", -22, 0)
+    f.body:SetWordWrap(true); f.body:SetJustifyV("TOP")
+    -- One edit box in a scroll frame serves both one-line and multi-line input.
+    local holder = CreateFrame("Frame", nil, f)
+    holder:SetPoint("LEFT", 22, 0); holder:SetPoint("RIGHT", -22, 0)
+    local bg = T.fill(holder, "BACKGROUND", C.midnight, 1); bg:SetAllPoints()
+    T.outline(holder, 0, C.gold, 0.6)
+    local scroll = CreateFrame("ScrollFrame", nil, holder, "UIPanelScrollFrameTemplate")
+    scroll:SetPoint("TOPLEFT", 8, -6); scroll:SetPoint("BOTTOMRIGHT", -28, 6)
+    local edit = CreateFrame("EditBox", nil, scroll)
+    edit:SetFontObject(ChatFontNormal)
+    edit:SetTextColor(C.text[1], C.text[2], C.text[3])
+    edit:SetAutoFocus(false)
+    edit:SetWidth(300)
+    scroll:SetScrollChild(edit)
+    scroll:SetScript("OnSizeChanged", function(self, w) edit:SetWidth(w) end)
+    holder:SetScript("OnMouseDown", function() edit:SetFocus() end)
+    edit:SetScript("OnEscapePressed", function() f:Hide() end)
+    edit:SetScript("OnEnterPressed", function(self)
+      if self:IsMultiLine() and not IsShiftKeyDown() then self:Insert("\n") return end
+      f.ok:Click()
+    end)
+    edit:SetScript("OnTextChanged", function(self)
+      local n, max = #(self:GetText() or ""), self:GetMaxLetters()
+      f.count:SetText(max > 0 and (n .. " / " .. max) or "")
+    end)
+    f.holder, f.scroll, f.edit = holder, scroll, edit
+    f.count = T.text(f, "muted", "RIGHT")
+    f.count:SetPoint("TOPRIGHT", holder, "BOTTOMRIGHT", 0, -4)
+    f.ok = T.button(f, "OK", 110, function()
+      local value = f.holder:IsShown() and (f.edit:GetText() or "") or nil
+      local cb = f.onAccept
+      f:Hide()
+      if cb then cb(value) end
+    end)
+    f.cancel = T.button(f, "Cancel", 110, function() f:Hide() end, "tab")
+    f.cancel:SetPoint("BOTTOMRIGHT", -22, 18)
+    f.ok:SetPoint("RIGHT", f.cancel, "LEFT", -10, 0)
+    f:SetScript("OnHide", function() f.onAccept = nil; f.edit:ClearFocus() end)
+    dialog = f
+  end
+  local f = dialog
+  f.onAccept = opts.onAccept
+  f.title:SetText((opts.title or ""):upper())
+  f.body:SetText(opts.text or "")
+  f.ok.label:SetText((opts.accept or "OK"):upper())
+  local input = opts.input
+  local bodyH = (opts.text and opts.text ~= "") and (f.body:GetStringHeight() + 12) or 0
+  local inputH = input and (input.height or (input.multiline and 120 or 30)) or 0
+  f:SetSize(opts.width or 440, 20 + 22 + bodyH + inputH + (input and 26 or 0) + 62)
+  f.holder:SetShown(input ~= nil)
+  f.count:SetShown(input ~= nil)
+  if input then
+    f.holder:ClearAllPoints()
+    f.holder:SetPoint("TOPLEFT", f.body, "TOPLEFT", 0, -bodyH)
+    f.holder:SetPoint("RIGHT", -22, 0)
+    f.holder:SetHeight(inputH)
+    f.edit:SetMultiLine(input.multiline and true or false)
+    f.edit:SetMaxLetters(input.maxLetters or 0)
+    f.edit:SetText(input.text or "")
+    f.edit:SetHeight(inputH - 12)
+    f.edit:HighlightText()
+  end
+  f:ClearAllPoints()
+  f:SetPoint("CENTER", 0, 120)
+  f:Show()
+  if input then f.edit:SetFocus() end
+end

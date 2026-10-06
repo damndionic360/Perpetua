@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.11.0
+
+### New: the guild window, in Perpetua
+- The guild key (J) and the guild button on the menu bar now open Perpetua. Hold **Shift** for Blizzard's guild window. Turn it off at the bottom of the **Guild Info** page.
+- **Guild** has a **Roster** view: everyone in the guild with level, rank, zone, note and when they were last online, online first. Search it, show or hide offline members, and sort any column.
+- Click a member for their panel: rank (pick a new one if you're allowed), public and officer notes (click to edit), and Whisper, Group invite, Profile, Make leader and Remove. Right-click a member for the same in a menu.
+- **Invite** adds someone to the guild by name.
+- New **Guild Info** page: the message of the day and guild information (with an Edit button if your rank can change them), the guild log, and Leave guild (and Disband for the Guild Master).
+- What guild sync knows (specs, gear, professions, raids) is still there: switch the Guild page to the **Perpetua** view.
+
 ## 2.10.0
 
 ### New: recipe totals
