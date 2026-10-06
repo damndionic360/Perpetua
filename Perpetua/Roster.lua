@@ -42,6 +42,17 @@ local function scan()
   ns.players() -- makes sure PerpetuaDB.guilds[guild] exists
   local g = PerpetuaDB.guilds[guild]
   g.roster, g.rosterAt = roster, now
+  try(ns.refreshUI)
+end
+
+-- A player's level for the window: the higher of the one we have (their last profile) and the roster's, which
+-- keeps up while they play and you're offline.
+function ns.levelOf(name, known)
+  local g = name and PerpetuaDB.guilds and PerpetuaDB.guilds[ns.guildName() or "No guild"]
+  local r = g and g.roster and g.roster[name]
+  local l = type(r) == "table" and r.l or nil
+  if l and (not known or l > known) then return l end
+  return known
 end
 
 local function queueScan()

@@ -6,7 +6,7 @@
 - Track two or more recipes and the **Profession** list in the objective tracker gets one more block at the bottom, under a thin gold line, **Totals: All Tracked Recipes**: every reagent they need between them, with how many you have, ticked off like the rest once you've got enough.
 
 ### Levels on perpetua.gg stay current
-- The addon now saves the guild roster too (everyone's level and class, and when they were last online), and the Perpetua app takes it to the site. A character who levelled while nobody else with the addon was on now shows their new level on the site anyway.
+- The addon now saves the guild roster too (everyone's level and class, and when they were last online), and the Perpetua app takes it to the site. A character who levelled while nobody else with the addon was on now shows their new level on the site anyway, and in the addon window too.
 
 ## 2.9.1
 

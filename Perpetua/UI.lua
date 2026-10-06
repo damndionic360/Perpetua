@@ -19,7 +19,7 @@ local function everyone(includeRoster)
   local list, byName = {}, {}
   for name, rec in pairs(ns.players()) do
     if type(rec) == "table" then
-      local row = { name = name, rec = rec, profile = rec.profile, class = rec.class, level = rec.level }
+      local row = { name = name, rec = rec, profile = rec.profile, class = rec.class, level = ns.levelOf(name, rec.level) }
       list[#list + 1] = row
       byName[name] = row
     end
@@ -378,9 +378,8 @@ local function renderGuild()
           GameTooltip:AddLine("Also plays", T.C.gold[1], T.C.gold[2], T.C.gold[3])
           for _, n in ipairs(row.others) do
             local o = byName[n]
-            local oc = o and o.profile and o.profile.char
             GameTooltip:AddDoubleLine(T.classIcon(o and o.class) .. classed(n, o and o.class),
-              (oc and oc.level and ("Level " .. oc.level) or "") .. (online[n] and "  online" or ""), 1, 1, 1, 0.64, 0.67, 0.79)
+              (o and o.level and ("Level " .. o.level) or "") .. (online[n] and "  online" or ""), 1, 1, 1, 0.64, 0.67, 0.79)
           end
           GameTooltip:Show()
         end or nil,
@@ -470,7 +469,8 @@ local function renderCharacter()
   local spec = p.spec and p.spec.n ~= c.class and p.spec.n or nil
   local ilvl = ns.avgItemLevel(p)
   local line1 = {}
-  if c.level then line1[#line1 + 1] = "Level " .. c.level end
+  local level = ns.levelOf(name, c.level)
+  if level then line1[#line1 + 1] = "Level " .. level end
   if c.race then line1[#line1 + 1] = safe(c.race) end
   if c.class then line1[#line1 + 1] = color(ns.classColor(c.classFile), (spec and (safe(spec) .. " ") or "") .. safe(c.class)) end
   local line2 = {}
