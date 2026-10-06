@@ -105,11 +105,21 @@ ns.NO_RECIPES = { Herbalism = true, Skinning = true, Fishing = true, Archaeology
 
 ns.QUALITY = { [0] = "9d9d9d", "ffffff", "1eff00", "0070dd", "a335ee", "ff8000", "e6cc80", "00ccff", "00ccff" }
 
+-- Class colours for text. Official Shaman blue and Warlock purple are too dark to read on navy, so text uses the
+-- site's lighter ones (perpetua.js TEXT_COLOR); ns.classRGB gives the real colour for bars and edges.
+local TEXT_COLOR = { SHAMAN = "4aa3ff", WARLOCK = "a3a4ff" }
 function ns.classColor(classFile)
+  if classFile and TEXT_COLOR[classFile] then return TEXT_COLOR[classFile] end
   local c = classFile and RAID_CLASS_COLORS and RAID_CLASS_COLORS[classFile]
   if not c then return "ffd100" end
   if c.colorStr then return c.colorStr:sub(-6) end
   return string.format("%02x%02x%02x", c.r * 255, c.g * 255, c.b * 255)
+end
+
+function ns.classRGB(classFile)
+  local c = classFile and RAID_CLASS_COLORS and RAID_CLASS_COLORS[classFile]
+  if not c then return { 0.831, 0.686, 0.216 } end
+  return { c.r, c.g, c.b }
 end
 
 -- Average item level of equipped gear (shirt and tabard left out).

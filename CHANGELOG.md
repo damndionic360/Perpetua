@@ -2,6 +2,13 @@
 
 ## 2.11.0
 
+### A new look
+- The window now looks like perpetua.gg: the site's card frame with its gold corners, a top bar with the crest and motto, the sidebar grouped into Guild, You and Reference (with a count of this week's raids on Calendar), and sync status, Hide Olympus and Sync now together in one card.
+- Page titles sit over the site's gold rule; the Guild page shows members, online and with the addon as big numbers.
+- The Guild list marks each player with their class colour and shows ranks as tags (gold for officers).
+- The Character page opens with a header card in the class colour: the crest, the name large with the surname, race, spec and class under it, and Level, item level, role and rank as badges. Professions and reputation are progress bars.
+- Shaman and Warlock names use the site's lighter blue and purple, which read better on navy.
+
 ### New: one Guild list
 - The **Guild** page lists everyone in the guild, with or without the addon: level, rank, spec, item level, professions, note and when they were last online (online first). Hover a name for their zone, notes, raid attunements, how fresh their profile is and their alts. Search, show or hide offline members, see alts separately, and sort any column.
 - Click a member for their panel: rank (pick a new one if your rank allows), public and officer notes (click to edit), and Whisper, Group invite, Profile, Make leader and Remove. Right-click a member for the same in a menu.

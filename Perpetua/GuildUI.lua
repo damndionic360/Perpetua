@@ -199,89 +199,124 @@ local R = { showOffline = true, alts = false, filter = "", sort = 8, desc = fals
 
 local function noteBox(parent, label)
   local b = CreateFrame("Button", nil, parent)
-  b:SetHeight(44)
+  b:SetHeight(46)
   b.label = T.text(b, "label"); b.label:SetPoint("TOPLEFT"); b.label:SetText(label:upper())
-  local bg = T.fill(b, "BACKGROUND", T.C.midnight, 0.9)
+  local bg = T.fill(b, "BACKGROUND", T.C.ink, 0.55)
   bg:SetPoint("TOPLEFT", 0, -14); bg:SetPoint("BOTTOMRIGHT")
-  b.edge = T.outline(b, 0, T.C.gold, 0.25)
+  local edge = CreateFrame("Frame", nil, b); edge:SetPoint("TOPLEFT", 0, -14); edge:SetPoint("BOTTOMRIGHT")
+  b.edge = T.outline(edge, 0, T.C.gold, 0.22)
   b.text = T.text(b, "small")
-  b.text:SetPoint("TOPLEFT", 8, -19); b.text:SetPoint("RIGHT", -8, 0)
-  local hl = T.fill(b, "HIGHLIGHT", T.C.gold, 0.1)
+  b.text:SetPoint("TOPLEFT", 9, -21); b.text:SetPoint("RIGHT", -9, 0)
+  local hl = T.fill(b, "HIGHLIGHT", T.C.gold, 0.08)
   hl:SetPoint("TOPLEFT", 0, -14); hl:SetPoint("BOTTOMRIGHT")
   return b
 end
 
+-- The member panel: the site's character header in miniature (name, surname, badges), their notes and alts, and
+-- what you can do, two buttons to a row along the bottom.
 local function buildPanel(parent)
   local p = CreateFrame("Frame", nil, parent)
-  p:SetWidth(262)
+  p:SetWidth(256)
   p:SetPoint("TOPRIGHT"); p:SetPoint("BOTTOMRIGHT")
-  T.panel(p)
+  local bg = T.gradient(p, "BACKGROUND", "VERTICAL", T.C.midnight, 1, T.C.royal, 1); bg:SetAllPoints()
+  T.outline(p, 0, T.C.gold, 0.45)
+  p:SetClipsChildren(true)
+  local mark = p:CreateTexture(nil, "BORDER")
+  mark:SetTexture(T.CREST); mark:SetSize(150, 150); mark:SetPoint("TOPRIGHT", 36, 32); mark:SetAlpha(0.07)
+  p.bar = T.fill(p, "ARTWORK", { 1, 1, 1 }, 1); p.bar:SetPoint("TOPLEFT", 1, -1); p.bar:SetPoint("BOTTOMLEFT", 1, 1); p.bar:SetWidth(3)
   p:Hide()
   local close = T.closeButton(p, function() R.selected = nil; ns.refreshUI(true) end)
   close:SetPoint("TOPRIGHT", -4, -4)
-  p.name = T.text(p, "heading"); p.name:SetPoint("TOPLEFT", 14, -14); p.name:SetPoint("RIGHT", -34, 0)
-  p.line1 = T.text(p, "small"); p.line1:SetPoint("TOPLEFT", p.name, "BOTTOMLEFT", 0, -6)
+  p.name = T.text(p, "name"); p.name:SetPoint("TOPLEFT", 16, -16); p.name:SetPoint("RIGHT", -34, 0)
+  p.surname = T.text(p, "surname"); p.surname:SetPoint("TOPLEFT", p.name, "BOTTOMLEFT", 0, -2)
+  p.badges = {}
+  for i = 1, 3 do p.badges[i] = T.badge(p) end
+  p.badges[1]:SetPoint("TOPLEFT", p.surname, "BOTTOMLEFT", 0, -9)
+  p.badges[2]:SetPoint("LEFT", p.badges[1], "RIGHT", 5, 0)
+  p.badges[3]:SetPoint("LEFT", p.badges[2], "RIGHT", 5, 0)
+  p.line1 = T.text(p, "small"); p.line1:SetPoint("TOPLEFT", p.badges[1], "BOTTOMLEFT", 0, -9); p.line1:SetPoint("RIGHT", -14, 0)
   p.line2 = T.text(p, "muted"); p.line2:SetPoint("TOPLEFT", p.line1, "BOTTOMLEFT", 0, -3); p.line2:SetPoint("RIGHT", -14, 0)
-  p.rankLabel = T.text(p, "label"); p.rankLabel:SetPoint("TOPLEFT", p.line2, "BOTTOMLEFT", 0, -14); p.rankLabel:SetText("RANK")
-  p.rankText = T.text(p, "body"); p.rankText:SetPoint("TOPLEFT", p.rankLabel, "BOTTOMLEFT", 0, -4)
-  p.rankButton = T.button(p, "Rank", 234, function(self) if R.member then
-    local m, r = R.member, rights(R.member)
-    MenuUtil.CreateContextMenu(self, function(_, root) rankMenu(root, m, r) end)
-  end end, "tab")
-  p.rankButton:SetPoint("TOPLEFT", p.rankLabel, "BOTTOMLEFT", 0, -4)
   p.note = noteBox(p, "Public note")
-  p.note:SetPoint("TOPLEFT", p.rankLabel, "BOTTOMLEFT", 0, -38); p.note:SetPoint("RIGHT", -14, 0)
+  p.note:SetPoint("TOPLEFT", p.line2, "BOTTOMLEFT", 0, -11); p.note:SetPoint("RIGHT", -16, 0)
   p.note:SetScript("OnClick", function() if R.member and rights(R.member).publicNote then A.note(R.member, true) end end)
   p.officer = noteBox(p, "Officer note")
-  p.officer:SetPoint("TOPLEFT", p.note, "BOTTOMLEFT", 0, -10); p.officer:SetPoint("RIGHT", -14, 0)
+  p.officer:SetPoint("TOPLEFT", p.note, "BOTTOMLEFT", 0, -8); p.officer:SetPoint("RIGHT", -16, 0)
   p.officer:SetScript("OnClick", function() if R.member and rights(R.member).officerNote then A.note(R.member, false) end end)
-  -- Buttons, two to a row, laid out by render.
+  p.altsLabel = T.text(p, "label"); p.altsLabel:SetText("ALSO PLAYS")
+  p.alts = {}
+  -- Buttons, two to a row from the bottom up, laid out by render.
   p.buttons = {
-    whisper = T.button(p, "Whisper", 113, function() A.whisper(R.member) end, "tab"),
-    group = T.button(p, "Group invite", 113, function() A.groupInvite(R.member) end, "tab"),
-    profile = T.button(p, "Profile", 113, function() ns.selected = R.member.name; ns.showTab("Character") end, "tab"),
-    leader = T.button(p, "Make leader", 113, function() A.leader(R.member) end, "tab"),
-    remove = T.button(p, "Remove", 113, function() A.remove(R.member) end, "tab"),
-    leave = T.button(p, "Leave guild", 113, function() A.leave() end, "tab"),
+    whisper = T.button(p, "Whisper", 108, function() A.whisper(R.member) end),
+    group = T.button(p, "Invite", 108, function() A.groupInvite(R.member) end, "tab"),
+    rank = T.button(p, "Rank  ▾", 108, function(self) if R.member then
+      local m, r = R.member, rights(R.member)
+      MenuUtil.CreateContextMenu(self, function(_, root) rankMenu(root, m, r) end)
+    end end, "tab"),
+    profile = T.button(p, "Profile", 108, function() ns.selected = R.member.name; ns.showTab("Character") end, "tab"),
+    leader = T.button(p, "Make leader", 108, function() A.leader(R.member) end, "tab"),
+    remove = T.button(p, "Remove", 108, function() A.remove(R.member) end, "tab"),
+    leave = T.button(p, "Leave guild", 108, function() A.leave() end, "tab"),
   }
-  p.buttons.remove.label:SetTextColor(1, 0.54, 0.48)
-  p.buttons.leave.label:SetTextColor(1, 0.54, 0.48)
+  for _, k in ipairs({ "remove", "leave" }) do
+    local b = p.buttons[k]
+    b.edge:SetColor({ 1, 0.54, 0.48 }, 0.55)
+    b.label:SetTextColor(1, 0.54, 0.48)
+  end
   return p
 end
 
-local function renderPanel(p, m)
+local function renderPanel(p, m, others, info)
   R.member = m
   local r = rights(m)
-  local cc = ns.classColor(m.classFile)
-  p.name:SetText(T.classIcon(m.classFile) .. " " .. color(cc, safe(m.name)))
-  p.line1:SetText(((m.level and ("Level " .. m.level .. " ")) or "") .. safe(m.className or ""))
+  local first, surname = m.name:match("^(%S+)%s+(.+)$")
+  p.name:SetText(color(ns.classColor(m.classFile), safe(first or m.name)))
+  p.surname:SetText(surname and safe(surname) or "")
+  local rgb = ns.classRGB(m.classFile)
+  p.bar:SetVertexColor(rgb[1], rgb[2], rgb[3], 1)
+  p.badges[1]:Set("Level", m.level or "?", true)
+  p.badges[2]:Set(nil, safe(m.rank), m.rankOrder <= 2)
+  p.badges[3]:SetShown(info and info.ilvl ~= nil)
+  if info and info.ilvl then p.badges[3]:Set("iLvl", info.ilvl) end
+  local spec = info and info.spec ~= "" and (info.spec .. " ") or ""
+  p.line1:SetText(spec .. safe(m.className or ""))
   p.line2:SetText((m.zone ~= "" and (safe(m.zone) .. "  ·  ") or "") .. lastOnlineText(m))
-  p.rankText:SetText(safe(m.rank))
-  p.rankText:SetShown(not r.rank)
-  p.rankButton:SetShown(r.rank and true or false)
-  p.rankButton.label:SetText(safe(m.rank):upper() .. "  ▾")
-  p.note.text:SetText(m.note ~= "" and safe(m.note) or (r.publicNote and color(T.HEX.muted, "Click to add a note") or ""))
+  p.note.text:SetText(m.note ~= "" and safe(m.note) or (r.publicNote and color(T.HEX.dim, "Click to add a note") or color(T.HEX.dim, "—")))
   p.note:EnableMouse(r.publicNote and true or false)
   p.officer:SetShown(r.viewOfficer and true or false)
-  p.officer.text:SetText(m.officerNote ~= "" and safe(m.officerNote) or (r.officerNote and color(T.HEX.muted, "Click to add an officer note") or ""))
+  p.officer.text:SetText(m.officerNote ~= "" and safe(m.officerNote) or (r.officerNote and color(T.HEX.dim, "Click to add an officer note") or color(T.HEX.dim, "—")))
   p.officer:EnableMouse(r.officerNote and true or false)
-  local show = {
-    whisper = not m.isSelf, group = not m.isSelf and m.online, profile = ns.players()[m.name] ~= nil,
-    leader = r.leader, remove = r.remove, leave = m.isSelf,
-  }
+  -- Also plays
   local anchor = r.viewOfficer and p.officer or p.note
-  local n = 0
-  for _, key in ipairs({ "whisper", "group", "profile", "leader", "remove", "leave" }) do
-    local b = p.buttons[key]
-    b:ClearAllPoints()
-    if show[key] then
-      local col, row = n % 2, math.floor(n / 2)
-      b:SetPoint("TOPLEFT", anchor, "BOTTOMLEFT", col * 121, -16 - row * 34)
-      b:Show()
-      n = n + 1
-    else
-      b:Hide()
+  for _, fs in ipairs(p.alts) do fs:Hide() end
+  p.altsLabel:SetShown(#others > 0)
+  if #others > 0 then
+    p.altsLabel:ClearAllPoints(); p.altsLabel:SetPoint("TOPLEFT", anchor, "BOTTOMLEFT", 0, -11)
+    local prev = p.altsLabel
+    for i, o in ipairs(others) do
+      if i > 4 then break end
+      local fs = p.alts[i]
+      if not fs then fs = T.text(p, "small"); p.alts[i] = fs end
+      fs:ClearAllPoints(); fs:SetPoint("TOPLEFT", prev, "BOTTOMLEFT", 0, i == 1 and -5 or -2); fs:SetPoint("RIGHT", -16, 0)
+      fs:SetText(color(ns.classColor(o.classFile), safe(o.name)) .. color(T.HEX.muted, "   Level " .. (o.level or "?")) .. (o.online and color(T.HEX.ok, "  online") or ""))
+      fs:Show()
+      prev = fs
     end
+  end
+  local show = {
+    whisper = not m.isSelf, group = not m.isSelf and m.online, rank = r.rank and true or false,
+    profile = ns.players()[m.name] ~= nil, leader = r.leader, remove = r.remove, leave = m.isSelf,
+  }
+  local order = {}
+  for _, key in ipairs({ "whisper", "group", "rank", "profile", "leader", "remove", "leave" }) do
+    if show[key] then order[#order + 1] = key else p.buttons[key]:Hide() end
+  end
+  local rows = math.ceil(#order / 2)
+  for i, key in ipairs(order) do
+    local b = p.buttons[key]
+    local col, row = (i - 1) % 2, math.floor((i - 1) / 2)
+    b:ClearAllPoints()
+    b:SetPoint("BOTTOMLEFT", 16 + col * 116, 14 + (rows - 1 - row) * 32)
+    b:Show()
   end
   p:Show()
 end
@@ -301,7 +336,7 @@ function ns.buildRoster(page)
   holder:SetPoint("TOPLEFT"); holder:SetPoint("BOTTOMRIGHT")
   R.holder = holder
   R.list = ns.List(holder, {
-    { "Name", 146 }, { "Lvl", 26, "RIGHT" }, { "Rank", 84 }, { "Spec", 104 }, { "iLvl", 30, "RIGHT" },
+    { "Name", 146 }, { "Lvl", 26, "RIGHT" }, { "Rank", 84, pill = true }, { "Spec", 104 }, { "iLvl", 30, "RIGHT" },
     { "Professions", 116 }, { "Note", 96 }, { "Last on", 62, "RIGHT" },
   }, function(i)
     if R.sort == i then R.desc = not R.desc else R.sort, R.desc = i, (i == 2 or i == 5) end
@@ -328,9 +363,8 @@ function ns.buildRoster(page)
   local c2, t2 = toggle("Alts separately", "alts")
   c1:SetPoint("LEFT", R.search, "RIGHT", 12, 0); t1:SetPoint("LEFT", c1, "RIGHT", 2, 0)
   c2:SetPoint("LEFT", t1, "RIGHT", 12, 0); t2:SetPoint("LEFT", c2, "RIGHT", 2, 0)
-  R.invite = T.button(bar, "Invite", 90, function() A.invite() end)
+  R.invite = T.button(bar, "+ Invite", 100, function() A.invite() end)
   R.invite:SetPoint("TOPRIGHT", -26, -1)
-  R.count = T.text(bar, "muted", "RIGHT"); R.count:SetPoint("RIGHT", R.invite, "LEFT", -14, 0)
   page:SetScript("OnShow", function() try(C_GuildInfo.GuildRoster) end)
 end
 
@@ -422,8 +456,8 @@ function ns.renderRoster()
   local rows, selected = {}, nil
   for _, row in ipairs(shown) do
     local m, others = row.m, row.others
-    if R.selected and m.guid == R.selected then selected = m end
     local info = syncInfo(m.name)
+    if R.selected and m.guid == R.selected then selected = { m = m, others = others, info = info } end
     local anyOnline = m.online or m.mobile
     for _, o in ipairs(others) do anyOnline = anyOnline or o.online end
     local text = (m.name .. " " .. m.rank .. " " .. m.zone .. " " .. m.note .. " " .. (m.className or "") .. " "
@@ -435,10 +469,11 @@ function ns.renderRoster()
       rows[#rows + 1] = {
         key = { m.name:lower(), m.level or 0, m.rankOrder, info.spec:lower(), info.ilvl or 0, info.profs:lower(), m.note:lower(), m.away },
         cells = {
-          T.classIcon(m.classFile) .. color(ns.classColor(m.classFile), safe(m.name)) .. extra,
-          m.level or "", dim and color(T.HEX.muted, safe(m.rank)) or safe(m.rank), info.spec, info.ilvl or "",
-          info.profs, color(T.HEX.muted, safe(m.note)), lastOnlineText(m),
+          color(ns.classColor(m.classFile), safe(m.name)) .. extra,
+          m.level and color(T.HEX.pale, m.level) or "", { m.rank ~= "" and m.rank or nil, m.rankOrder <= 2 },
+          info.spec, info.ilvl or "", info.profs, color(T.HEX.muted, safe(m.note)), lastOnlineText(m),
         },
+        bar = ns.classRGB(m.classFile), selected = ns.newGuildWindow() and R.selected ~= nil and m.guid == R.selected,
         member = m, info = info, others = others, officer = officer,
         onClick = function(d, button, r)
           -- Without the New guild window the list is just the list: a click opens their profile, as it always did.
@@ -461,12 +496,14 @@ function ns.renderRoster()
     if desc then return x > y end
     return x < y
   end)
-  R.count:SetText(#all .. " members  ·  " .. online .. " online")
+  local withAddon = 0
+  for _, rec in pairs(ns.players()) do if type(rec) == "table" and rec.profile then withAddon = withAddon + 1 end end
+  ns.setStats({ { #all, "members" }, { online, "online", "ok" }, { withAddon, "with the addon" } })
   R.invite:SetShown(ns.newGuildWindow() and try(CanGuildInvite) and true or false)
   if not ns.newGuildWindow() then selected = nil end
-  R.holder:SetPoint("BOTTOMRIGHT", selected and -272 or 0, 0)
+  R.holder:SetPoint("BOTTOMRIGHT", selected and -268 or 0, 0)
   R.list:SetRows(rows)
-  if selected then renderPanel(R.panel, selected) else R.panel:Hide(); R.selected = nil; R.member = nil end
+  if selected then renderPanel(R.panel, selected.m, selected.others, selected.info) else R.panel:Hide(); R.selected = nil; R.member = nil end
   ns.lastRosterRows = rows -- for the test harness
 end
 

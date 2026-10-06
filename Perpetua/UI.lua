@@ -37,7 +37,9 @@ local function everyone(includeRoster)
 end
 
 -- ---------- list widget ----------
--- cols = { { title, width, justify } }; rows = { { cells = {...}, onClick = fn, onEnter = fn } }
+-- cols = { { title, width, justify, pill = true } }; rows = { { cells = {...}, onClick = fn, onEnter = fn,
+-- bar = { r, g, b } (a class-colour bar at the row's left edge), selected = true } }. A pill column's cell is
+-- { text, gold } and draws as an outlined tag.
 
 local function List(parent, cols, onSort)
   local L = { rows = {}, cols = cols }
@@ -48,7 +50,7 @@ local function List(parent, cols, onSort)
   local underline = T.fill(header, "ARTWORK", T.C.gold, 0.25)
   underline:SetHeight(1)
   underline:SetPoint("BOTTOMLEFT"); underline:SetPoint("BOTTOMRIGHT")
-  local x = 8
+  local x = 12
   for i, c in ipairs(cols) do
     local h = CreateFrame("Button", nil, header)
     h:SetPoint("LEFT", x, 0)
@@ -84,15 +86,25 @@ local function List(parent, cols, onSort)
     -- Thin separators instead of stripes; a soft gold wash on hover.
     local sep = T.fill(r, "BACKGROUND", T.C.gold, 0.08)
     sep:SetHeight(1); sep:SetPoint("BOTTOMLEFT"); sep:SetPoint("BOTTOMRIGHT")
-    local hl = T.fill(r, "HIGHLIGHT", T.C.gold, 0.1)
+    local hl = T.fill(r, "HIGHLIGHT", T.C.gold, 0.07)
     hl:SetAllPoints()
-    r.cells = {}
-    local cx = 8
+    r.bar = T.fill(r, "ARTWORK", { 1, 1, 1 }, 1)
+    r.bar:SetPoint("TOPLEFT", 0, -1); r.bar:SetPoint("BOTTOMLEFT", 0, 1); r.bar:SetWidth(3)
+    r.selFill = T.gradient(r, "BACKGROUND", "HORIZONTAL", T.C.gold, 0.16, T.C.gold, 0.04)
+    r.selFill:SetAllPoints()
+    r.selEdge = T.outline(r, 0, T.C.gold, 0.55, "ARTWORK")
+    r.cells, r.pills = {}, {}
+    local cx = 12
     for c, col in ipairs(cols) do
       local fs = T.text(r, "small", col[3])
       fs:SetPoint("LEFT", cx, 0)
       fs:SetWidth(col[2])
       r.cells[c] = fs
+      if col.pill then
+        local pill = T.pill(r)
+        pill:SetPoint("LEFT", cx, 0)
+        r.pills[c] = pill
+      end
       cx = cx + col[2] + 8
     end
     r:RegisterForClicks("LeftButtonUp", "RightButtonUp")
@@ -108,7 +120,20 @@ local function List(parent, cols, onSort)
     for i, d in ipairs(data) do
       local r = row(i)
       r.data = d
-      for c = 1, #cols do r.cells[c]:SetText(d.cells[c] or "") end
+      for c = 1, #cols do
+        local v = d.cells[c]
+        if r.pills[c] then
+          r.cells[c]:SetText("")
+          r.pills[c]:SetShown(type(v) == "table" and v[1] ~= nil and v[1] ~= "")
+          if type(v) == "table" then r.pills[c]:Set(v[1], v[2]) end
+        else
+          r.cells[c]:SetText(v or "")
+        end
+      end
+      r.bar:SetShown(d.bar ~= nil)
+      if d.bar then r.bar:SetVertexColor(d.bar[1], d.bar[2], d.bar[3], 1) end
+      r.selFill:SetShown(d.selected and true or false)
+      r.selEdge:SetAlpha(d.selected and 0.55 or 0)
       r:Show()
     end
     for i = #data + 1, #L.rows do L.rows[i]:Hide(); L.rows[i].data = nil end
@@ -138,6 +163,8 @@ local function Canvas(parent, layout)
     for _, l in ipairs(self.lines) do l:Hide(); l.link = nil; l.onClick = nil end
     for _, r in ipairs(self.rules) do r:Hide() end
     for _, f in ipairs(self.paras or {}) do f:Hide() end
+    for _, b in ipairs(self.bars or {}) do b.meter:Hide(); b.text:Hide() end
+    self.usedBars = 0
     self.used, self.usedRules, self.usedParas, self.y, self.col = 0, 0, 0, { 0, 0 }, 1
     scroll:SetVerticalScroll(0)
   end
@@ -208,13 +235,30 @@ local function Canvas(parent, layout)
     l.onClick = onClick
     return l
   end
+  -- A label, a gold progress bar and a value on one line (professions, reputation).
+  C.bars, C.usedBars = {}, 0
+  function C:Bar(label, value, fraction, indent)
+    local l = self:Line(label, "small", nil, indent)
+    self.usedBars = self.usedBars + 1
+    local b = self.bars[self.usedBars]
+    if not b then
+      b = { meter = T.meter(child), text = T.text(child, "muted", "RIGHT") }
+      self.bars[self.usedBars] = b
+    end
+    local w = COL_W - (indent or 0)
+    b.meter:ClearAllPoints(); b.meter:SetPoint("LEFT", l, "LEFT", math.floor(w * 0.36), 0); b.meter:SetWidth(math.floor(w * 0.40))
+    b.text:ClearAllPoints(); b.text:SetPoint("RIGHT", l, "RIGHT", -10, 0); b.text:SetWidth(math.floor(w * 0.22))
+    b.meter:SetValue(fraction); b.text:SetText(value or "")
+    b.meter:Show(); b.text:Show()
+    return l
+  end
   -- Section heading: Cinzel caps over a faint gold hairline.
   function C:Heading(text)
     if self.y[self.col] > 0 then self:Gap(12) end
     self:Line(text:upper(), "heading")
     self.usedRules = self.usedRules + 1
     local r = self.rules[self.usedRules]
-    if not r then r = T.fill(child, "ARTWORK", T.C.gold, 0.3); r:SetHeight(1); self.rules[self.usedRules] = r end
+    if not r then r = T.gradient(child, "ARTWORK", "HORIZONTAL", T.C.gold, 0.45, T.C.gold, 0); r:SetHeight(1); self.rules[self.usedRules] = r end
     r:ClearAllPoints()
     r:SetPoint("TOPLEFT", COL_X[self.col], -(self.y[self.col] - 2))
     r:SetWidth(COL_W - 10)
@@ -287,31 +331,45 @@ local char = {}
 
 -- The Character page: a header block (class crest, name, level and spec, guild and freshness, a button to the
 -- site), then gear and stats on the left, talents, professions, attunements and reputation on the right.
+-- The Character page's header card, like the site's character page: a class-coloured edge and wash, the class
+-- crest, the name large with the surname and spec under it, badges on the right.
 local function buildCharacter(page)
   local head = CreateFrame("Frame", nil, page)
-  head:SetPoint("TOPLEFT"); head:SetPoint("TOPRIGHT"); head:SetHeight(74)
+  head:SetPoint("TOPLEFT"); head:SetPoint("TOPRIGHT", -26, 0); head:SetHeight(90)
+  head:SetClipsChildren(true)
+  local base = T.fill(head, "BACKGROUND", T.C.midnight, 0.85); base:SetAllPoints()
+  char.wash = T.gradient(head, "BACKGROUND", "HORIZONTAL", T.C.gold, 0.22, T.C.royal, 0)
+  char.wash:SetPoint("TOPLEFT"); char.wash:SetPoint("BOTTOMLEFT"); char.wash:SetWidth(360)
+  T.outline(head, 0, T.C.gold, 0.5)
+  char.bar = T.fill(head, "ARTWORK", T.C.gold, 1); char.bar:SetPoint("TOPLEFT", 1, -1); char.bar:SetPoint("BOTTOMLEFT", 1, 1); char.bar:SetWidth(4)
+  local mark = head:CreateTexture(nil, "BORDER")
+  mark:SetTexture(T.CREST); mark:SetSize(190, 190); mark:SetPoint("TOPRIGHT", 30, 50); mark:SetAlpha(0.07)
   local holder = CreateFrame("Frame", nil, head)
-  holder:SetSize(56, 56); holder:SetPoint("TOPLEFT", 2, -4)
+  holder:SetSize(58, 58); holder:SetPoint("LEFT", 20, 0)
   local bg = T.fill(holder, "BACKGROUND", T.C.midnight, 1)
   bg:SetAllPoints()
   char.icon = holder:CreateTexture(nil, "ARTWORK")
   char.icon:SetPoint("TOPLEFT", 3, -3); char.icon:SetPoint("BOTTOMRIGHT", -3, 3)
-  char.iconEdge = T.outline(holder, 0, T.C.gold, 0.6, "OVERLAY")
-  char.name = T.text(head, "page"); char.name:SetPoint("TOPLEFT", holder, "TOPRIGHT", 16, 0)
-  char.line1 = T.text(head, "body"); char.line1:SetPoint("TOPLEFT", char.name, "BOTTOMLEFT", 0, -5)
-  char.line2 = T.text(head, "muted"); char.line2:SetPoint("TOPLEFT", char.line1, "BOTTOMLEFT", 0, -4)
-  char.site = T.button(head, "Open on the site", 168, function()
+  char.iconEdge = T.outline(holder, 0, T.C.gold, 0.8, "OVERLAY")
+  char.name = T.text(head, "hero"); char.name:SetPoint("TOPLEFT", holder, "TOPRIGHT", 18, -6)
+  char.line1 = T.text(head, "surname"); char.line1:SetPoint("TOPLEFT", char.name, "BOTTOMLEFT", 0, -4)
+  char.line2 = T.text(head, "muted"); char.line2:SetPoint("TOPLEFT", char.line1, "BOTTOMLEFT", 0, -3)
+  char.badges = {}
+  for i = 1, 4 do char.badges[i] = T.badge(head) end
+  char.badges[4]:SetPoint("TOPRIGHT", -16, -14)
+  for i = 3, 1, -1 do char.badges[i]:SetPoint("RIGHT", char.badges[i + 1], "LEFT", -6, 0) end
+  char.site = T.button(head, "Open on the site", 150, function()
     if char.shown then T.copyBox(char.shown .. " on the site", "https://" .. ns.SITE .. "/characters/" .. (char.shown:gsub(" ", "-"))) end
   end, "tab")
-  char.site:SetPoint("TOPRIGHT", -26, -6)
-  local sep = T.fill(head, "ARTWORK", T.C.gold, 0.15)
-  sep:SetHeight(1); sep:SetPoint("BOTTOMLEFT"); sep:SetPoint("BOTTOMRIGHT", -26, 0)
+  char.site:SetHeight(22)
+  char.site:SetPoint("BOTTOMRIGHT", -16, 12)
   local area = CreateFrame("Frame", nil, page)
-  area:SetPoint("TOPLEFT", 0, -86); area:SetPoint("BOTTOMRIGHT")
+  area:SetPoint("TOPLEFT", 0, -104); area:SetPoint("BOTTOMRIGHT")
   char.canvas = Canvas(area)
 end
 
-local function characterHeader(name, classFile, line1, line2)
+-- badges = { { label, value, gold }, ... } (up to four, right-aligned).
+local function characterHeader(name, classFile, line1, line2, badges)
   char.shown = name
   local coords = CLASS_ICON_TCOORDS and classFile and CLASS_ICON_TCOORDS[classFile]
   if coords then
@@ -321,10 +379,22 @@ local function characterHeader(name, classFile, line1, line2)
     char.icon:SetTexture(T.CREST)
     char.icon:SetTexCoord(0, 1, 0, 1)
   end
-  char.iconEdge:SetColor(T.C.gold, classFile and 0.7 or 0.3)
-  char.name:SetText(name and classed(name, classFile) or "")
-  char.line1:SetText(line1 or "")
+  local rgb = classFile and ns.classRGB(classFile) or T.C.gold
+  char.bar:SetVertexColor(rgb[1], rgb[2], rgb[3], 1)
+  pcall(char.wash.SetGradient, char.wash, "HORIZONTAL", CreateColor(rgb[1], rgb[2], rgb[3], 0.22), CreateColor(T.C.royal[1], T.C.royal[2], T.C.royal[3], 0))
+  char.iconEdge:SetColor(T.C.gold, classFile and 0.8 or 0.3)
+  local first, surname = (name or ""):match("^(%S+)%s+(.+)$")
+  char.name:SetText(name and color(ns.classColor(classFile), safe(first or name)) or "")
+  char.line1:SetText(((surname and (safe(surname) .. (line1 and line1 ~= "" and "  ·  " or ""))) or "") .. (line1 or ""))
   char.line2:SetText(line2 or "")
+  -- Badges fill from the right.
+  local list = badges or {}
+  for i = 1, 4 do
+    local b = char.badges[5 - i]
+    local item = list[#list - i + 1]
+    b:SetShown(item ~= nil)
+    if item then b:Set(item[1], item[2], item[3]) end
+  end
   char.site:SetShown(name ~= nil)
 end
 
@@ -352,16 +422,16 @@ local function renderCharacter()
   local muted = T.HEX.muted
   local spec = p.spec and p.spec.n ~= c.class and p.spec.n or nil
   local ilvl = ns.avgItemLevel(p)
-  local line1 = {}
   local level = ns.levelOf(name, c.level)
-  if level then line1[#line1 + 1] = "Level " .. level end
-  if c.race then line1[#line1 + 1] = safe(c.race) end
-  if c.class then line1[#line1 + 1] = color(ns.classColor(c.classFile), (spec and (safe(spec) .. " ") or "") .. safe(c.class)) end
+  local line1 = (c.race and (safe(c.race) .. " ") or "") .. (c.class and ((spec and (safe(spec) .. " ") or "") .. safe(c.class)) or "")
   local line2 = {}
-  if c.guild then line2[#line2 + 1] = color(T.HEX.warm, "<" .. safe(c.guild) .. ">") .. (c.guildRank and (" " .. safe(c.guildRank)) or "") end
-  if ilvl then line2[#line2 + 1] = "item level " .. ilvl end
-  line2[#line2 + 1] = "updated " .. ns.ago(rec.pt)
-  characterHeader(name, c.classFile, table.concat(line1, "  ·  "), table.concat(line2, "  ·  "))
+  if c.guild then line2[#line2 + 1] = color(T.HEX.warm, "<" .. safe(c.guild) .. ">") end
+  line2[#line2 + 1] = "profile from " .. ns.ago(rec.pt)
+  local badges = { { "Level", level or "?", true } }
+  if ilvl then badges[#badges + 1] = { "Avg iLvl", ilvl } end
+  if p.spec and p.spec.role and ns.ROLE[p.spec.role] then badges[#badges + 1] = { "Role", ns.ROLE[p.spec.role] } end
+  if c.guildRank then badges[#badges + 1] = { nil, safe(c.guildRank), true } end
+  characterHeader(name, c.classFile, line1, table.concat(line2, "  ·  "), badges)
   -- Left column: gear, stats
   C:Col(1)
   C:Heading("Gear")
@@ -400,8 +470,11 @@ local function renderCharacter()
   C:Heading("Professions")
   for _, x in ipairs(p.profs or {}) do
     local n = x.recipes and #x.recipes or 0
-    C:Line(safe(x.n) .. (x.m and color(muted, "  " .. (x.r or 0) .. " / " .. x.m) or "") ..
-      (n > 0 and color(T.HEX.gold, "  ·  " .. n .. " recipes") or ""), "small")
+    if x.m and x.m > 0 then
+      C:Bar(safe(x.n) .. (n > 0 and color(T.HEX.gold, "  " .. n) or ""), (x.r or 0) .. " / " .. x.m, (x.r or 0) / x.m)
+    else
+      C:Line(safe(x.n) .. (n > 0 and color(T.HEX.gold, "  ·  " .. n .. " recipes") or ""), "small")
+    end
   end
   C:Heading("Attunements & keys")
   for _, a in ipairs(ns.ATTUNEMENTS) do
@@ -415,8 +488,8 @@ local function renderCharacter()
     local x = reps[id]
     if x and x.s then
       if not any then C:Heading("Reputation"); any = true end
-      C:Line(safe(x.n) .. "  " .. color(ns.STANDING_COLOR[x.s] or "ffffff", ns.STANDING[x.s] or "") ..
-        (x.v and x.m and color(muted, string.format("  %d / %d", x.v, x.m)) or ""), "small")
+      local standing = color(ns.STANDING_COLOR[x.s] or "ffffff", ns.STANDING[x.s] or "")
+      if x.v and x.m and x.m > 0 then C:Bar(safe(x.n), standing, x.v / x.m) else C:Line(safe(x.n) .. "  " .. standing, "small") end
     end
   end
 end
@@ -828,7 +901,7 @@ local function stepCard(parent, number, title, height, bottom)
   card.body:SetJustifyH("LEFT"); card.body:SetJustifyV("TOP"); card.body:SetWordWrap(true); card.body:SetSpacing(2)
   -- Fixed box, as on the Welcome page: GetStringHeight reports one line before the width resolves, so cards that
   -- measured their text came out too short and the text ran over the next card and out of the window.
-  card.body:SetPoint("TOPLEFT", 16, -54); card.body:SetPoint("BOTTOMRIGHT", -16, bottom or 10)
+  card.body:SetPoint("TOPLEFT", 16, -48); card.body:SetPoint("BOTTOMRIGHT", -16, bottom or 10)
   return card
 end
 
@@ -837,9 +910,10 @@ local function buildSetup(page)
   left:SetPoint("TOPLEFT"); left:SetPoint("BOTTOMLEFT"); left:SetWidth(452)
   -- Fixed heights (519px of the page's ~528), each with a line to spare for the text measured in the addon's font.
   setup.cards = {
-    stepCard(left, "1", "What the addon does", 140),
-    stepCard(left, "2", "Why link your characters", 170),
-    stepCard(left, "3", "How to link", 185, 48), -- the copy button sits under the text
+    -- Heights fit the page under the window's header (496px); the text boxes are the size they always were.
+    stepCard(left, "1", "What the addon does", 134),
+    stepCard(left, "2", "Why link your characters", 164),
+    stepCard(left, "3", "How to link", 179, 48), -- the copy button sits under the text
   }
   local prev
   for _, card in ipairs(setup.cards) do
@@ -1199,17 +1273,18 @@ end
 
 -- ---------- window ----------
 
+-- The sidebar, in groups: the guild, you, and reference pages.
 local TABS = {
-  { "Guild", buildGuild, renderGuild },
-  { "Guild Info", function(page) ns.buildGuildInfo(page) end, function() ns.renderGuildInfo() end, newGuild = true }, -- with the New guild window
-  { "Character", buildCharacter, renderCharacter },
-  { "Calendar", buildCalendar, renderCalendar },
-  { "Attunements", buildAttunements, renderAttunements },
-  { "Crafters", buildCrafters, renderCrafters },
-  { "Loot", buildLoot, renderLoot },
-  { "Forums", buildForums, renderForums },
-  { "Export", buildExport, function() ns.renderExport() end },
-  { "Setup", buildSetup, renderSetup },
+  { "Guild", buildGuild, renderGuild, group = "Guild" },
+  { "Guild Info", function(page) ns.buildGuildInfo(page) end, function() ns.renderGuildInfo() end, group = "Guild", newGuild = true }, -- with the New guild window
+  { "Calendar", buildCalendar, renderCalendar, group = "Guild" },
+  { "Loot", buildLoot, renderLoot, group = "Guild" },
+  { "Forums", buildForums, renderForums, group = "Guild" },
+  { "Character", buildCharacter, renderCharacter, group = "You" },
+  { "Export", buildExport, function() ns.renderExport() end, group = "You" },
+  { "Setup", buildSetup, renderSetup, group = "You" },
+  { "Attunements", buildAttunements, renderAttunements, group = "Reference" },
+  { "Crafters", buildCrafters, renderCrafters, group = "Reference" },
   { "Welcome", buildWelcome, renderWelcome, noNav = true }, -- the only page for characters outside the guild
   { "Hide Olympus", buildOlympus, renderOlympus, noNav = true }, -- opened from its row above Sync now
 }
@@ -1232,6 +1307,34 @@ local NAV = {
   ["Hide Olympus"] = { "INV_Shield_06", "Hide chat, invites, trades and duels from Olympus guilds" },
 }
 
+-- Big numbers in the page header (the site's "42 characters on the roster"). A page's renderer calls
+-- ns.setStats({ { 42, "members" }, { 12, "online", "ok" } }); pages that don't, show none.
+local function setStats(list)
+  local x = 0
+  for i = #main.stats, 1, -1 do main.stats[i].n:Hide(); main.stats[i].l:Hide() end
+  local prev
+  for i = #(list or {}), 1, -1 do
+    local st = main.stats[i]
+    if not st then
+      st = { n = T.text(main, "stat", "RIGHT"), l = T.text(main, "muted", "RIGHT") }
+      main.stats[i] = st
+    end
+    local item = list[i]
+    st.l:SetText(item[2] or ""); st.n:SetText(tostring(item[1] or ""))
+    local c = item[3] == "ok" and { 0.561, 0.820, 0.541 } or T.C.pale
+    st.n:SetTextColor(c[1], c[2], c[3])
+    st.l:ClearAllPoints(); st.n:ClearAllPoints()
+    if prev then st.l:SetPoint("RIGHT", prev, "LEFT", -24, 0) else st.l:SetPoint("BOTTOMRIGHT", main, "TOPRIGHT", -26, -112) end
+    st.n:SetPoint("BOTTOMRIGHT", st.l, "BOTTOMLEFT", -7, -2)
+    st.n:Show(); st.l:Show()
+    prev = st.n
+  end
+  main.statsSet = true
+end
+function ns.setStats(list) if main then setStats(list) end end
+
+local TOP, SIDE = 62, 196 -- top bar height, sidebar width
+
 local function build()
   main = CreateFrame("Frame", "PerpetuaFrame", UIParent)
   main:SetSize(1020, 640)
@@ -1246,39 +1349,76 @@ local function build()
   T.window(main)
   tinsert(UISpecialFrames, "PerpetuaFrame") -- Escape closes it
   main:Hide()
+  main.stats = {}
 
-  -- Sidebar: crest and wordmark, the sections, sync status at the bottom.
+  -- Top bar: crest, wordmark and motto; the New guild window switch, the guild and close on the right.
+  local top = CreateFrame("Frame", nil, main)
+  top:SetPoint("TOPLEFT", 6, -6); top:SetPoint("TOPRIGHT", -6, -6); top:SetHeight(TOP - 6)
+  local tbg = T.gradient(top, "BACKGROUND", "VERTICAL", T.C.ink, 0, T.C.ink, 0.55); tbg:SetAllPoints()
+  local tline = T.fill(top, "BORDER", T.C.gold, 0.22); tline:SetHeight(1); tline:SetPoint("BOTTOMLEFT", -5, 0); tline:SetPoint("BOTTOMRIGHT", 5, 0)
+  local crest = top:CreateTexture(nil, "ARTWORK")
+  crest:SetTexture(T.CREST); crest:SetSize(38, 38); crest:SetPoint("LEFT", 16, 0)
+  local brand = T.text(top, "brand"); brand:SetPoint("TOPLEFT", crest, "TOPRIGHT", 12, -4); brand:SetText("PERPETUA")
+  local motto = T.text(top, "tagline"); motto:SetPoint("TOPLEFT", brand, "BOTTOMLEFT", 0, -3); motto:SetText("the grind never stops")
+  local close = T.closeButton(top, function() main:Hide() end)
+  close:SetPoint("RIGHT", -10, 0)
+  main.guild = T.text(top, "muted", "RIGHT"); main.guild:SetPoint("RIGHT", close, "LEFT", -12, 0)
+  local div = T.fill(top, "ARTWORK", T.C.gold, 0.25); div:SetSize(1, 24); div:SetPoint("RIGHT", main.guild, "LEFT", -14, 0)
+  -- "Try the new look" style switch for features still being tried out: a NEW tag, the name and a switch.
+  local newRow = CreateFrame("Frame", nil, top)
+  newRow:SetSize(240, 22); newRow:SetPoint("RIGHT", div, "LEFT", -14, 0)
+  main.newSwitch = T.switch(newRow, function(on) ns.setNewGuildWindow(on) end)
+  main.newSwitch:SetPoint("RIGHT")
+  local newLabel = T.text(newRow, "nav", "RIGHT"); newLabel:SetPoint("RIGHT", main.newSwitch, "LEFT", -9, 0)
+  newLabel:SetText("GUILD WINDOW")
+  local tag = CreateFrame("Frame", nil, newRow); tag:SetSize(32, 14); tag:SetPoint("RIGHT", newLabel, "LEFT", -8, 0)
+  local tagBg = T.fill(tag, "BACKGROUND", T.C.gold, 1); tagBg:SetAllPoints()
+  local tagText = T.text(tag, "badge", "CENTER"); tagText:SetPoint("CENTER", 0, 0); tagText:SetText("NEW")
+  tagText:SetTextColor(T.C.navy[1], T.C.navy[2], T.C.navy[3]); tagText:SetShadowColor(0, 0, 0, 0)
+  local hover = CreateFrame("Frame", nil, newRow); hover:SetPoint("TOPLEFT", tag, "TOPLEFT"); hover:SetPoint("BOTTOMRIGHT", newLabel, "BOTTOMRIGHT")
+  hover:SetScript("OnEnter", function(self)
+    GameTooltip:SetOwner(self, "ANCHOR_BOTTOM")
+    GameTooltip:AddLine("New guild window", T.C.gold[1], T.C.gold[2], T.C.gold[3])
+    GameTooltip:AddLine("The guild key (J) and the guild button on the menu bar open Perpetua's guild window instead of Blizzard's, with the officer tools (ranks, notes, invites, the Guild Info page). Hold Shift for Blizzard's. Turn it off here any time.", 1, 1, 1, true)
+    GameTooltip:Show()
+  end)
+  hover:SetScript("OnLeave", function() GameTooltip:Hide() end)
+  main.newRow = newRow
+
+  -- Sidebar: the sections in groups, the sync card at the bottom.
   local side = CreateFrame("Frame", nil, main)
-  side:SetPoint("TOPLEFT", 1, -3); side:SetPoint("BOTTOMLEFT", 1, 1); side:SetWidth(200)
-  local sbg = T.fill(side, "BACKGROUND", T.C.midnight, 0.75)
-  sbg:SetAllPoints()
+  side:SetPoint("TOPLEFT", 1, -TOP); side:SetPoint("BOTTOMLEFT", 1, 1); side:SetWidth(SIDE)
+  local sbg = T.fill(side, "BACKGROUND", T.C.ink, 0.45); sbg:SetAllPoints()
   local edge = T.fill(side, "BORDER", T.C.gold, 0.18)
   edge:SetWidth(1); edge:SetPoint("TOPRIGHT"); edge:SetPoint("BOTTOMRIGHT")
-  local crest = side:CreateTexture(nil, "ARTWORK")
-  crest:SetTexture(T.CREST); crest:SetSize(40, 40); crest:SetPoint("TOPLEFT", 16, -18)
-  local brand = T.text(side, "brand"); brand:SetPoint("TOPLEFT", crest, "TOPRIGHT", 10, -3); brand:SetText("PERPETUA")
-  local tag = T.text(side, "muted"); tag:SetPoint("TOPLEFT", brand, "BOTTOMLEFT", 0, -3); tag:SetText("guild companion")
-  for i, t in ipairs(TABS) do
+  main.side = side
+  main.groups = {}
+  for _, t in ipairs(TABS) do
     if not t.noNav then
       local b = T.navButton(side, t[1], "Interface\\Icons\\" .. NAV[t[1]][1], function() ns.showTab(t[1]) end)
+      b:SetPoint("RIGHT", -1, 0)
       tabs[t[1]] = b
+      if t.group and not main.groups[t.group] then
+        local g = T.text(side, "group"); g:SetText(t.group:upper()); main.groups[t.group] = g
+      end
     end
   end
-  main.sync = T.text(side, "muted")
-  main.sync:SetPoint("BOTTOMLEFT", 18, 96); main.sync:SetPoint("RIGHT", -14, 0)
-  main.sync:SetWordWrap(true); main.sync:SetJustifyV("BOTTOM"); main.sync:SetHeight(44)
-  main.update = T.text(side, "tagline"); main.update:SetPoint("BOTTOMLEFT", main.sync, "TOPLEFT", 0, 6)
-  local sync = T.button(side, "Sync now", 164, function() ns.refreshSelf(true); ReloadUI() end, "tab")
-  sync:SetPoint("BOTTOMLEFT", 18, 24)
-  main.syncButton = sync
-  local version = T.text(side, "muted"); version:SetPoint("TOP", sync, "BOTTOM", 0, -3)
-  version:SetText("v" .. ns.VERSION); version:SetAlpha(0.55)
+
+  local card = CreateFrame("Frame", nil, side)
+  card:SetPoint("BOTTOMLEFT", 14, 14); card:SetPoint("BOTTOMRIGHT", -14, 14); card:SetHeight(132)
+  local cbg = T.fill(card, "BACKGROUND", T.C.midnight, 0.7); cbg:SetAllPoints()
+  T.outline(card, 0, T.C.gold, 0.25)
+  main.syncCard = card
+  main.syncDot = T.fill(card, "ARTWORK", { 0.561, 0.820, 0.541 }, 1); main.syncDot:SetSize(6, 6); main.syncDot:SetPoint("TOPLEFT", 12, -15)
+  main.sync = T.text(card, "small"); main.sync:SetPoint("LEFT", main.syncDot, "RIGHT", 7, 0); main.sync:SetPoint("RIGHT", -10, 0)
+  main.update = T.text(card, "tagline"); main.update:SetPoint("TOPLEFT", 12, -28); main.update:SetPoint("RIGHT", -10, 0)
   -- Hide Olympus: the switch turns it all on or off, the label opens its page.
-  local oly = CreateFrame("Frame", nil, side)
-  oly:SetPoint("BOTTOMLEFT", 18, 60); oly:SetSize(164, 26)
+  local oly = CreateFrame("Frame", nil, card)
+  oly:SetPoint("TOPLEFT", 12, -50); oly:SetPoint("RIGHT", -12, 0); oly:SetHeight(20)
   local olyLabel = CreateFrame("Button", nil, oly)
   olyLabel:SetPoint("TOPLEFT"); olyLabel:SetPoint("BOTTOMRIGHT", -44, 0)
-  olyLabel.text = T.text(olyLabel, "nav"); olyLabel.text:SetPoint("LEFT", 0, 0); olyLabel.text:SetText("HIDE OLYMPUS")
+  olyLabel.text = T.text(olyLabel, "badge"); olyLabel.text:SetPoint("LEFT", 0, 0); olyLabel.text:SetText("HIDE OLYMPUS")
+  olyLabel.text:SetTextColor(T.C.text[1], T.C.text[2], T.C.text[3])
   olyLabel:SetScript("OnClick", function() ns.showTab("Hide Olympus") end)
   olyLabel:SetScript("OnEnter", function(self)
     self.text:SetTextColor(T.C.pale[1], T.C.pale[2], T.C.pale[3])
@@ -1291,11 +1431,11 @@ local function build()
   main.olySwitch = T.switch(oly, ns.olympus.set)
   main.olySwitch:SetPoint("RIGHT", 0, 0)
   main.olyRow = oly
-  -- Outside the guild the sidebar shows only this in place of the sections.
-  main.lockedNote = T.text(side, "muted")
-  main.lockedNote:SetPoint("TOPLEFT", 18, -92); main.lockedNote:SetPoint("RIGHT", -14, 0)
-  main.lockedNote:SetWordWrap(true); main.lockedNote:SetJustifyH("LEFT")
-  main.lockedNote:SetText("Guild sync, the calendar, loot and everything else unlock when you join <" .. ns.GUILD .. ">.")
+  local sync = T.button(card, "Sync now", 140, function() ns.refreshSelf(true); ReloadUI() end, "tab")
+  sync:SetPoint("TOPLEFT", 12, -80); sync:SetPoint("RIGHT", -12, 0)
+  main.syncButton = sync
+  local version = T.text(card, "muted", "CENTER"); version:SetPoint("TOP", sync, "BOTTOM", 0, -6)
+  version:SetText("v" .. ns.VERSION); version:SetAlpha(0.6)
   sync:SetScript("OnEnter", function(self)
     GameTooltip:SetOwner(self, "ANCHOR_TOP")
     GameTooltip:AddLine("Sync now", T.C.gold[1], T.C.gold[2], T.C.gold[3])
@@ -1303,40 +1443,23 @@ local function build()
     GameTooltip:Show()
   end)
   sync:SetScript("OnLeave", function() GameTooltip:Hide() end)
+  -- Outside the guild the sidebar shows only this in place of the sections.
+  main.lockedNote = T.text(side, "muted")
+  main.lockedNote:SetPoint("TOPLEFT", 18, -18); main.lockedNote:SetPoint("RIGHT", -14, 0)
+  main.lockedNote:SetWordWrap(true); main.lockedNote:SetJustifyH("LEFT")
+  main.lockedNote:SetText("Guild sync, the calendar, loot and everything else unlock when you join <" .. ns.GUILD .. ">.")
 
-  -- Content: page title and subtitle over a hairline, then the page.
-  main.title = T.text(main, "page"); main.title:SetPoint("TOPLEFT", 226, -24)
-  main.subtitle = T.text(main, "muted"); main.subtitle:SetPoint("TOPLEFT", main.title, "BOTTOMLEFT", 1, -4)
-  main.status = T.text(main, "muted", "RIGHT"); main.status:SetPoint("TOPRIGHT", -56, -50)
-  -- "Try the new look" style switch for features still being tried out: a NEW tag, the name and a switch.
-  local newRow = CreateFrame("Frame", nil, main)
-  newRow:SetSize(230, 22); newRow:SetPoint("TOPRIGHT", -56, -20)
-  main.newSwitch = T.switch(newRow, function(on) ns.setNewGuildWindow(on) end)
-  main.newSwitch:SetPoint("RIGHT")
-  local newLabel = T.text(newRow, "nav", "RIGHT"); newLabel:SetPoint("RIGHT", main.newSwitch, "LEFT", -8, 0)
-  newLabel:SetText("NEW GUILD WINDOW")
-  local tag = CreateFrame("Frame", nil, newRow); tag:SetSize(34, 14); tag:SetPoint("RIGHT", newLabel, "LEFT", -7, 0)
-  local tagBg = T.fill(tag, "BACKGROUND", T.C.gold, 1); tagBg:SetAllPoints()
-  local tagText = T.text(tag, "label", "CENTER"); tagText:SetPoint("CENTER", 0, 0); tagText:SetText("NEW")
-  tagText:SetTextColor(T.C.navy[1], T.C.navy[2], T.C.navy[3]); tagText:SetShadowColor(0, 0, 0, 0)
-  local hover = CreateFrame("Frame", nil, newRow); hover:SetPoint("TOPLEFT", tag, "TOPLEFT"); hover:SetPoint("BOTTOMRIGHT", newLabel, "BOTTOMRIGHT")
-  hover:SetScript("OnEnter", function(self)
-    GameTooltip:SetOwner(self, "ANCHOR_BOTTOM")
-    GameTooltip:AddLine("New guild window", T.C.gold[1], T.C.gold[2], T.C.gold[3])
-    GameTooltip:AddLine("The guild key (J) and the guild button on the menu bar open Perpetua's guild window instead of Blizzard's. Hold Shift for Blizzard's. Turn it off here any time.", 1, 1, 1, true)
-    GameTooltip:Show()
-  end)
-  hover:SetScript("OnLeave", function() GameTooltip:Hide() end)
-  main.newRow = newRow
-  local close = T.closeButton(main, function() main:Hide() end)
-  close:SetPoint("TOPRIGHT", -14, -14)
-  local line = T.fill(main, "ARTWORK", T.C.gold, 0.18)
-  line:SetHeight(1); line:SetPoint("TOPLEFT", 226, -76); line:SetPoint("TOPRIGHT", -24, -76)
+  -- Page header: the title over the site's gold rule with a diamond, a subtitle beside it, numbers on the right.
+  local X = SIDE + 26
+  main.title = T.text(main, "title"); main.title:SetPoint("TOPLEFT", X, -(TOP + 18))
+  main.rule = T.rule(main); main.rule:SetPoint("TOPLEFT", main.title, "BOTTOMLEFT", 0, -6); main.rule:SetWidth(150)
+  main.subtitle = T.text(main, "muted"); main.subtitle:SetPoint("LEFT", main.rule, "RIGHT", 12, 0)
+  main.status = T.text(main, "muted", "RIGHT"); main.status:SetPoint("BOTTOMRIGHT", main, "TOPRIGHT", -26, -112) -- errors only
 
   for _, t in ipairs(TABS) do
     local page = CreateFrame("Frame", nil, main)
-    page:SetPoint("TOPLEFT", 226, -92)
-    page:SetPoint("BOTTOMRIGHT", -24, 20)
+    page:SetPoint("TOPLEFT", X, -(TOP + 64))
+    page:SetPoint("BOTTOMRIGHT", -24, 18)
     page:Hide()
     pages[t[1]] = page
     t[2](page)
@@ -1361,8 +1484,9 @@ function ns.showTab(name)
   end
   current = name
   for n, page in pairs(pages) do page:SetShown(n == name) end
-  -- The sidebar, top to bottom, without gaps for hidden pages.
-  local y = -84
+  -- The sidebar, top to bottom: a group's label before its first page, no gaps for hidden pages.
+  local y, lastGroup = -6, nil
+  for _, g in pairs(main.groups) do g:Hide() end
   for _, t in ipairs(TABS) do
     local b = tabs[t[1]]
     if b then
@@ -1370,14 +1494,23 @@ function ns.showTab(name)
       b:SetShown(shown)
       b:SetSelected(t[1] == name)
       if shown then
-        b:ClearAllPoints(); b:SetPoint("TOPLEFT", 0, y); b:SetPoint("RIGHT", -1, 0)
-        y = y - 40
+        if t.group ~= lastGroup and main.groups[t.group] then
+          y = y - 12
+          local g = main.groups[t.group]
+          g:ClearAllPoints(); g:SetPoint("TOPLEFT", main.side, "TOPLEFT", 18, y); g:Show()
+          y = y - 16
+          lastGroup = t.group
+        end
+        b:ClearAllPoints(); b:SetPoint("TOPLEFT", main.side, "TOPLEFT", 0, y); b:SetPoint("RIGHT", main.side, "RIGHT", -1, 0)
+        y = y - 34
       end
     end
   end
-  main.syncButton:SetShown(not locked); main.sync:SetShown(not locked); main.olyRow:SetShown(not locked); main.lockedNote:SetShown(locked)
+  main.syncCard:SetShown(not locked); main.lockedNote:SetShown(locked)
   main.newRow:SetShown(not locked)
   main.title:SetText(name:upper())
+  local tabsCalendar = tabs.Calendar
+  if tabsCalendar then tabsCalendar:SetCount(ns.upcomingRaids and ns.upcomingRaids() or 0) end
   main.subtitle:SetText(NAV[name][2])
   main:Show()
   ns.refreshUI(true)
@@ -1396,18 +1529,19 @@ function ns.refreshUI(now)
   -- Joined or left the guild while the window was open, or the New guild window was switched.
   if ns.locked() ~= (current == "Welcome") then ns.showTab(current) return end
   if main.newGuildShown ~= ns.newGuildWindow() then main.newGuildShown = ns.newGuildWindow(); ns.showTab(current) return end
-  local n = 0
-  for _, rec in pairs(ns.players()) do if type(rec) == "table" and rec.profile then n = n + 1 end end
-  main.status:SetText(current == "Welcome" and ""
-    or (ns.guildName() and ("<" .. safe(ns.guildName()) .. ">  ·  ") or "") .. n .. " with the addon")
+  main.guild:SetText(current ~= "Welcome" and ns.guildName() and ("<" .. safe(ns.guildName()) .. ">") or "")
+  main.status:SetText("")
   local heard = 0
   for _ in pairs(ns.session.heard) do heard = heard + 1 end
   main.olySwitch:SetOn(ns.olympus.db().on)
   main.newSwitch:SetOn(ns.newGuildWindow())
   local update = not ns.locked() and ns.updateAvailable()
   main.update:SetText(update and ("Update available: " .. safe(update)) or "")
-  main.sync:SetText("Heard from " .. heard .. " guildmates this session. " .. ns.session.received .. " updates received.")
+  main.sync:SetText(heard .. " guildmates heard  ·  " .. ns.session.received .. " updates")
+  main.syncDot:SetVertexColor(heard > 0 and 0.561 or 0.639, heard > 0 and 0.820 or 0.675, heard > 0 and 0.541 or 0.788, 1)
+  main.statsSet = false
   local ok, err = pcall(renderers[current])
+  if not main.statsSet then setStats(nil) end
   if not ok then main.status:SetText(color(T.HEX.danger, safe(tostring(err):sub(1, 120)))) end
 end
 ns.fire = function() ns.refreshUI() end

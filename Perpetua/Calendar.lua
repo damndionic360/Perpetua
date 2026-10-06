@@ -46,6 +46,16 @@ function ns.calendar()
   return store().calendar
 end
 
+-- Raids in the next week that aren't cancelled (the count on the Calendar button).
+function ns.upcomingRaids()
+  local c, now, n = ns.calendar(), ns.now(), 0
+  for _, e in ipairs(c and c.events or {}) do
+    local t = tonumber(e.t)
+    if t and not e.cancelled and t > now - 3600 and t < now + 7 * 86400 then n = n + 1 end
+  end
+  return n
+end
+
 function ns.calendarVersion()
   local c = ns.calendar()
   return c and c.t and tostring(c.t) or nil

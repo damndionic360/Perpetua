@@ -13,10 +13,11 @@ T.CREST = MEDIA .. "crest"
 local C = {
   gold = { 0.831, 0.686, 0.216 }, pale = { 0.949, 0.843, 0.549 }, warm = { 0.910, 0.784, 0.455 },
   navy = { 0.055, 0.102, 0.251 }, midnight = { 0.047, 0.090, 0.188 }, royal = { 0.082, 0.165, 0.369 },
+  royalLight = { 0.110, 0.184, 0.431 }, ink = { 0.027, 0.051, 0.118 }, dim = { 0.498, 0.533, 0.659 },
   text = { 0.937, 0.902, 0.784 }, muted = { 0.639, 0.675, 0.788 },
 }
 T.C = C
-T.HEX = { gold = "d4af37", pale = "f2d78c", warm = "e8c874", text = "efe6c8", muted = "a3acc9", ok = "8fd18a", danger = "ff8a7a" }
+T.HEX = { gold = "d4af37", pale = "f2d78c", warm = "e8c874", text = "efe6c8", muted = "a3acc9", ok = "8fd18a", danger = "ff8a7a", dim = "7f88a8" }
 
 local function font(name, file, size, color, fallback)
   local f = CreateFont(name)
@@ -41,6 +42,13 @@ T.fonts = {
   brand   = font("PerpetuaFontBrand", "Cinzel-Bold.ttf", 17, C.gold, GameFontNormalLarge),
   page    = font("PerpetuaFontPage", "Cinzel-Bold.ttf", 21, C.gold, GameFontNormalLarge),
   nav     = font("PerpetuaFontNav", "Cinzel-SemiBold.ttf", 11, C.text, GameFontNormal),
+  group   = font("PerpetuaFontGroup", "Cinzel-SemiBold.ttf", 9, C.dim, GameFontNormalSmall),
+  stat    = font("PerpetuaFontStat", "Cinzel-Bold.ttf", 26, C.pale, GameFontNormalLarge),
+  hero    = font("PerpetuaFontHero", "Cinzel-Bold.ttf", 28, C.text, GameFontNormalLarge),
+  badge   = font("PerpetuaFontBadge", "Cinzel-SemiBold.ttf", 9, C.muted, GameFontNormalSmall),
+  badgeValue = font("PerpetuaFontBadgeValue", "Cinzel-Bold.ttf", 12, C.pale, GameFontNormalSmall),
+  lvl     = font("PerpetuaFontLevel", "Cinzel-SemiBold.ttf", 11, C.pale, GameFontNormalSmall),
+  surname = font("PerpetuaFontSurname", "CormorantGaramond-SemiBoldItalic.ttf", 17, C.muted, GameFontDisable),
 }
 
 function T.hex(key, s) return "|cff" .. (T.HEX[key] or key) .. s .. "|r" end
@@ -60,6 +68,15 @@ function T.fill(frame, layer, color, alpha)
   return t
 end
 
+-- A texture that fades from color c1/alpha a1 to c2/alpha a2, "VERTICAL" (bottom to top) or "HORIZONTAL" (left to right).
+function T.gradient(frame, layer, orientation, c1, a1, c2, a2)
+  local t = T.fill(frame, layer, { 1, 1, 1 }, 1)
+  if not pcall(t.SetGradient, t, orientation, CreateColor(c1[1], c1[2], c1[3], a1), CreateColor(c2[1], c2[2], c2[3], a2)) then
+    t:SetVertexColor(c2[1], c2[2], c2[3], (a1 + a2) / 2)
+  end
+  return t
+end
+
 -- A 1px rectangle `inset` pixels inside frame. Returns an object with SetAlpha / SetColor for all four sides.
 function T.outline(frame, inset, color, alpha, layer)
   inset = inset or 0
@@ -76,19 +93,76 @@ function T.outline(frame, inset, color, alpha, layer)
   }
 end
 
--- The modern frame: navy gradient, one thin gold border, a gold accent line fading in and out along the top.
+-- The window, like the site's .card: royal-navy field with a glow along the top, a gold border, a faint
+-- hairline 5px inside and the corner brackets.
 function T.window(frame)
-  local bg = T.fill(frame, "BACKGROUND", C.midnight, 0.97)
-  bg:SetAllPoints()
-  pcall(bg.SetGradient, bg, "VERTICAL", CreateColor(C.midnight[1], C.midnight[2], C.midnight[3], 0.98),
-    CreateColor(C.royal[1], C.royal[2], C.royal[3], 0.96))
-  T.outline(frame, 0, C.gold, 0.45)
-  local l, r = T.fill(frame, "ARTWORK", C.gold, 1), T.fill(frame, "ARTWORK", C.gold, 1)
-  l:SetHeight(2); r:SetHeight(2)
-  l:SetPoint("TOPLEFT", 1, -1); l:SetPoint("TOPRIGHT", frame, "TOP", 0, -1)
-  r:SetPoint("TOPRIGHT", -1, -1); r:SetPoint("TOPLEFT", frame, "TOP", 0, -1)
-  pcall(l.SetGradient, l, "HORIZONTAL", CreateColor(C.gold[1], C.gold[2], C.gold[3], 0), CreateColor(C.gold[1], C.gold[2], C.gold[3], 0.9))
-  pcall(r.SetGradient, r, "HORIZONTAL", CreateColor(C.gold[1], C.gold[2], C.gold[3], 0.9), CreateColor(C.gold[1], C.gold[2], C.gold[3], 0))
+  local base = T.gradient(frame, "BACKGROUND", "VERTICAL", C.midnight, 0.98, C.navy, 0.98)
+  base:SetAllPoints()
+  local glow = T.gradient(frame, "BACKGROUND", "VERTICAL", C.royalLight, 0, C.royalLight, 0.85)
+  glow:SetPoint("TOPLEFT"); glow:SetPoint("TOPRIGHT"); glow:SetHeight(260)
+  T.outline(frame, 0, C.gold, 0.9)
+  T.outline(frame, 5, C.gold, 0.2)
+  local coords = { TOPLEFT = { 0, 1, 0, 1 }, TOPRIGHT = { 1, 0, 0, 1 }, BOTTOMLEFT = { 0, 1, 1, 0 }, BOTTOMRIGHT = { 1, 0, 1, 0 } }
+  for point, tc in pairs(coords) do
+    local t = frame:CreateTexture(nil, "OVERLAY")
+    t:SetTexture(MEDIA .. "bracket")
+    t:SetSize(30, 30)
+    t:SetTexCoord(tc[1], tc[2], tc[3], tc[4])
+    t:SetPoint(point, point:find("LEFT") and 2 or -2, point:find("TOP") and -2 or 2)
+  end
+end
+
+-- A small framed label and value, like the site's .badge ("LEVEL 20"). b:Set(label, value, gold) sizes it.
+function T.badge(parent)
+  local b = CreateFrame("Frame", nil, parent)
+  b:SetHeight(22)
+  local bg = T.fill(b, "BACKGROUND", C.midnight, 0.6); bg:SetAllPoints()
+  b.edge = T.outline(b, 0, C.gold, 0.32)
+  b.label = T.text(b, "badge"); b.label:SetPoint("LEFT", 9, 0)
+  b.value = T.text(b, "badgeValue"); b.value:SetPoint("LEFT", b.label, "RIGHT", 6, 0)
+  function b:Set(label, value, gold)
+    self.label:SetText(label and label:upper() or "")
+    self.value:SetText(value and tostring(value) or "")
+    self.value:ClearAllPoints()
+    if label and label ~= "" then self.value:SetPoint("LEFT", self.label, "RIGHT", 6, 0) else self.value:SetPoint("LEFT", 9, 0) end
+    local w = (label and label ~= "" and (self.label:GetStringWidth() + 6) or 0) + (self.value:GetStringWidth() or 0) + 18
+    self:SetWidth(math.max(28, w))
+    self.edge:SetColor(C.gold, gold and 1 or 0.32)
+  end
+  return b
+end
+
+-- A small outlined tag (rank in the guild list): gold for officers, quiet otherwise.
+function T.pill(parent)
+  local p = CreateFrame("Frame", nil, parent)
+  p:SetHeight(17)
+  p.edge = T.outline(p, 0, C.gold, 0.32)
+  p.text = T.text(p, "badge", "CENTER"); p.text:SetPoint("CENTER", 0, 0)
+  function p:Set(text, gold)
+    self.text:SetText((text or ""):upper())
+    local c = gold and C.pale or C.muted
+    self.text:SetTextColor(c[1], c[2], c[3])
+    self.edge:SetColor(C.gold, gold and 1 or 0.32)
+    self:SetWidth(math.max(20, (self.text:GetStringWidth() or 0) + 14))
+  end
+  return p
+end
+
+-- A thin progress bar with a gold fill (professions, reputation). m:SetValue(fraction).
+function T.meter(parent)
+  local m = CreateFrame("Frame", nil, parent)
+  m:SetHeight(6)
+  local track = T.fill(m, "BACKGROUND", C.muted, 0.12); track:SetAllPoints()
+  m.fill = T.gradient(m, "ARTWORK", "HORIZONTAL", C.gold, 1, C.pale, 1)
+  m.fill:SetPoint("TOPLEFT"); m.fill:SetPoint("BOTTOMLEFT")
+  function m:SetValue(f)
+    f = math.max(0, math.min(1, f or 0))
+    self.fill:SetShown(f > 0)
+    self.fill:SetWidth(math.max(1, (self:GetWidth() or 0) * f))
+    self.frac = f
+  end
+  m:SetScript("OnSizeChanged", function(self) if self.frac then self:SetValue(self.frac) end end)
+  return m
 end
 
 -- A game icon cropped of its baked-in border, with a thin gold edge. Returns the texture.
@@ -104,28 +178,40 @@ function T.icon(parent, path, size)
   return holder
 end
 
--- Sidebar entry: icon and label; hover glows, the selected one gets a gold bar and a brighter label.
+-- Sidebar entry: icon and label; hover glows, the selected one gets a gold bar and a gold wash fading to the right.
+-- b:SetCount(n) shows a small gold count (upcoming raids).
 function T.navButton(parent, label, iconPath, onClick)
   local b = CreateFrame("Button", nil, parent)
-  b:SetHeight(38)
-  b.fill = T.fill(b, "BACKGROUND", C.gold, 0)
-  b.fill:SetAllPoints()
+  b:SetHeight(34)
+  b.wash = T.gradient(b, "BACKGROUND", "HORIZONTAL", C.gold, 0.22, C.gold, 0)
+  b.wash:SetAllPoints()
   b.bar = T.fill(b, "ARTWORK", C.gold, 1)
-  b.bar:SetPoint("TOPLEFT"); b.bar:SetPoint("BOTTOMLEFT"); b.bar:SetWidth(3)
-  local hl = b:CreateTexture(nil, "HIGHLIGHT")
-  hl:SetAllPoints(); hl:SetTexture(WHITE); hl:SetVertexColor(C.gold[1], C.gold[2], C.gold[3], 0.07)
-  b.icon = T.icon(b, iconPath, 22)
+  b.bar:SetPoint("TOPLEFT", 0, -6); b.bar:SetPoint("BOTTOMLEFT", 0, 6); b.bar:SetWidth(3)
+  local hl = T.gradient(b, "HIGHLIGHT", "HORIZONTAL", C.gold, 0.12, C.gold, 0)
+  hl:SetAllPoints()
+  b.icon = T.icon(b, iconPath, 18)
   b.icon:SetPoint("LEFT", 18, 0)
   b.label = T.text(b, "nav")
-  b.label:SetPoint("LEFT", b.icon, "RIGHT", 12, 0)
+  b.label:SetPoint("LEFT", b.icon, "RIGHT", 11, 0)
   b.label:SetText(label:upper())
+  b.count = CreateFrame("Frame", nil, b)
+  b.count:SetSize(18, 15); b.count:SetPoint("RIGHT", -14, 0)
+  local cbg = T.fill(b.count, "BACKGROUND", C.gold, 1); cbg:SetAllPoints()
+  b.count.text = T.text(b.count, "badge", "CENTER"); b.count.text:SetPoint("CENTER", 0, 0)
+  b.count.text:SetTextColor(C.navy[1], C.navy[2], C.navy[3]); b.count.text:SetShadowColor(0, 0, 0, 0)
+  b.count:Hide()
+  function b:SetCount(n)
+    self.count:SetShown((n or 0) > 0)
+    self.count.text:SetText(n and tostring(n) or "")
+    self.count:SetWidth(math.max(18, (self.count.text:GetStringWidth() or 0) + 10))
+  end
   function b:SetSelected(on)
-    self.fill:SetAlpha(on and 0.13 or 0)
+    self.wash:SetShown(on)
     self.bar:SetShown(on)
     local c = on and C.pale or C.text
-    self.label:SetTextColor(c[1], c[2], c[3], on and 1 or 0.78)
+    self.label:SetTextColor(c[1], c[2], c[3], on and 1 or 0.8)
     self.icon.tex:SetDesaturated(not on)
-    self.icon.tex:SetAlpha(on and 1 or 0.7)
+    self.icon.tex:SetAlpha(on and 1 or 0.75)
     self.icon.edge:SetAlpha(on and 0.9 or 0.3)
   end
   b:SetSelected(false)
