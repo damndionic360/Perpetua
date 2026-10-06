@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.10.0
+
+### New: recipe totals
+- Track two or more recipes and the **Profession** list in the objective tracker gets one more block at the bottom, **All tracked recipes**: every reagent they need between them, with how many you have, ticked off like the rest once you've got enough.
+
 ## 2.9.1
 
 ### Fixes
