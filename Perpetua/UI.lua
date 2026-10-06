@@ -1201,7 +1201,7 @@ end
 
 local TABS = {
   { "Guild", buildGuild, renderGuild },
-  { "Guild Info", function(page) ns.buildGuildInfo(page) end, function() ns.renderGuildInfo() end },
+  { "Guild Info", function(page) ns.buildGuildInfo(page) end, function() ns.renderGuildInfo() end, newGuild = true }, -- with the New guild window
   { "Character", buildCharacter, renderCharacter },
   { "Calendar", buildCalendar, renderCalendar },
   { "Attunements", buildAttunements, renderAttunements },
@@ -1261,7 +1261,6 @@ local function build()
   for i, t in ipairs(TABS) do
     if not t.noNav then
       local b = T.navButton(side, t[1], "Interface\\Icons\\" .. NAV[t[1]][1], function() ns.showTab(t[1]) end)
-      b:SetPoint("TOPLEFT", 0, -84 - (i - 1) * 40); b:SetPoint("RIGHT", -1, 0)
       tabs[t[1]] = b
     end
   end
@@ -1355,9 +1354,26 @@ function ns.showTab(name)
   if locked then name = "Welcome" elseif name == "Welcome" then name = lastTab or (not PerpetuaDB.setupSeen and "Setup") or "Guild" end
   if name ~= "Welcome" then lastTab = name end
   current = name
-  for n, page in pairs(pages) do
-    page:SetShown(n == name)
-    if tabs[n] then tabs[n]:SetSelected(n == name); tabs[n]:SetShown(not locked) end
+  -- Pages that come with the New guild window go away when it's off.
+  local newGuild = ns.newGuildWindow()
+  for _, t in ipairs(TABS) do
+    if t[1] == name and t.newGuild and not newGuild then name = "Guild" end
+  end
+  current = name
+  for n, page in pairs(pages) do page:SetShown(n == name) end
+  -- The sidebar, top to bottom, without gaps for hidden pages.
+  local y = -84
+  for _, t in ipairs(TABS) do
+    local b = tabs[t[1]]
+    if b then
+      local shown = not locked and (newGuild or not t.newGuild)
+      b:SetShown(shown)
+      b:SetSelected(t[1] == name)
+      if shown then
+        b:ClearAllPoints(); b:SetPoint("TOPLEFT", 0, y); b:SetPoint("RIGHT", -1, 0)
+        y = y - 40
+      end
+    end
   end
   main.syncButton:SetShown(not locked); main.sync:SetShown(not locked); main.olyRow:SetShown(not locked); main.lockedNote:SetShown(locked)
   main.newRow:SetShown(not locked)
@@ -1377,8 +1393,9 @@ function ns.refreshUI(now)
     C_Timer.After(1, function() pendingRefresh = false; ns.refreshUI(true) end)
     return
   end
-  -- Joined or left the guild while the window was open.
+  -- Joined or left the guild while the window was open, or the New guild window was switched.
   if ns.locked() ~= (current == "Welcome") then ns.showTab(current) return end
+  if main.newGuildShown ~= ns.newGuildWindow() then main.newGuildShown = ns.newGuildWindow(); ns.showTab(current) return end
   local n = 0
   for _, rec in pairs(ns.players()) do if type(rec) == "table" and rec.profile then n = n + 1 end end
   main.status:SetText(current == "Welcome" and ""

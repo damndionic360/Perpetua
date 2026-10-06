@@ -441,7 +441,8 @@ function ns.renderRoster()
         },
         member = m, info = info, others = others, officer = officer,
         onClick = function(d, button, r)
-          if d.member.noRoster then
+          -- Without the New guild window the list is just the list: a click opens their profile, as it always did.
+          if d.member.noRoster or not ns.newGuildWindow() then
             if d.info.profile then ns.selected = d.member.name; ns.showTab("Character") end
             return
           end
@@ -461,7 +462,8 @@ function ns.renderRoster()
     return x < y
   end)
   R.count:SetText(#all .. " members  ·  " .. online .. " online")
-  R.invite:SetShown(try(CanGuildInvite) and true or false)
+  R.invite:SetShown(ns.newGuildWindow() and try(CanGuildInvite) and true or false)
+  if not ns.newGuildWindow() then selected = nil end
   R.holder:SetPoint("BOTTOMRIGHT", selected and -272 or 0, 0)
   R.list:SetRows(rows)
   if selected then renderPanel(R.panel, selected) else R.panel:Hide(); R.selected = nil; R.member = nil end
