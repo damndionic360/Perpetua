@@ -91,7 +91,7 @@ local HELP = {
   { "sync", "save for the Perpetua app (reloads your UI)" },
   { "minimap", "hide or show the minimap button" },
   { "olympus [on|off]", "hide chat and invites from Olympus guilds" },
-  { "guildui", "use Blizzard's default guild window (or Perpetua's again)" },
+  { "guildui [on|off]", "the new guild window: the guild key and button open Perpetua's" },
   { "guild", "the guild roster" },
 }
 SlashCmdList.PERPETUA = function(msg)
@@ -127,9 +127,9 @@ SlashCmdList.PERPETUA = function(msg)
   elseif msg == "me" then ns.selected = ns.selfName; ns.showTab("Character")
   elseif msg == "guild" or msg == "roster" then ns.showTab("Guild")
   elseif msg == "guildui" or msg == "guildui on" or msg == "guildui off" then
-    -- "on" = Blizzard's default guild UI; bare toggles.
-    local on = (msg == "guildui on") or (msg == "guildui" and not ns.useDefaultGuildUI())
-    ns.setDefaultGuildUI(on)
+    -- "on" = the new guild window; bare toggles.
+    local on = (msg == "guildui on") or (msg == "guildui" and not ns.newGuildWindow())
+    ns.setNewGuildWindow(on)
   else ns.toggle() end
 end
 

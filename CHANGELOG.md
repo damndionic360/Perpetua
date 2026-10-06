@@ -2,14 +2,17 @@
 
 ## 2.11.0
 
-### New: the guild window, in Perpetua
-- The guild key (J) and the guild button on the menu bar now open Perpetua. Hold **Shift** for Blizzard's guild window.
-- Rather keep Blizzard's guild window? Tick **Use default guild UI** in Options > AddOns > Perpetua, flip it at the bottom of the **Guild Info** page, or type `/ppta guildui`. Everything else in Perpetua works the same either way.
-- **Guild** has a **Roster** view: everyone in the guild with level, rank, zone, note and when they were last online, online first. Search it, show or hide offline members, and sort any column.
-- Click a member for their panel: rank (pick a new one if you're allowed), public and officer notes (click to edit), and Whisper, Group invite, Profile, Make leader and Remove. Right-click a member for the same in a menu.
+### New: one Guild list, with the guild's officer tools
+- The **Guild** page lists everyone in the guild, with or without the addon: level, rank, spec, item level, professions, note and when they were last online (online first). Hover a name for their zone, notes, raid attunements, how fresh their profile is and their alts. Search, show or hide offline members, see alts separately, and sort any column.
+- Click a member for their panel: rank (pick a new one if your rank allows), public and officer notes (click to edit), and Whisper, Group invite, Profile, Make leader and Remove. Right-click a member for the same in a menu.
 - **Invite** adds someone to the guild by name.
-- New **Guild Info** page: the message of the day and guild information (with an Edit button if your rank can change them), the guild log, and Leave guild (and Disband for the Guild Master).
-- What guild sync knows (specs, gear, professions, raids) is still there: switch the Guild page to the **Perpetua** view.
+- New **Guild Info** page: the message of the day and guild information (with Edit if your rank can change them), the guild log, and Leave guild (and Disband for the Guild Master).
+
+### Try it: the new guild window
+- Switch on **New guild window** at the top of the Perpetua window (or in Options > AddOns > Perpetua, or `/ppta guildui`) and the guild key (J) and the guild button on the menu bar open Perpetua instead of Blizzard's guild window. Hold **Shift** for Blizzard's. It's off until you turn it on.
+
+### Fixes
+- Search box hints no longer run past the edge of the box.
 
 ## 2.10.0
 

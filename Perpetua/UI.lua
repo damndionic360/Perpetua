@@ -226,7 +226,6 @@ end
 
 -- ---------- Guild tab ----------
 
-local guild = { sort = 2, desc = true, filter = "", roster = false, onlineOnly = false, alts = false, view = "roster" }
 
 local function professionsText(p)
   local out = {}
@@ -242,18 +241,6 @@ local function raidsText(p)
     if a.group == "Raids" and ns.attuned(p, a) then out[#out + 1] = a.short end
   end
   return color(T.HEX.gold, table.concat(out, " "))
-end
-
--- Who's online right now, from the guild roster.
-local function onlineNow()
-  local online = {}
-  for i = 1, (try(GetNumGuildMembers) or 0) do
-    local full, _, _, _, _, _, _, _, isOnline = try(GetGuildRosterInfo, i)
-    local name = ns.playerKey(ns.readable(full))
-    if name and ns.readable(isOnline) then online[name] = true end
-  end
-  if ns.selfName then online[ns.selfName] = true end
-  return online
 end
 
 -- Characters grouped by WoW account: every profile lists the account's other characters (PerpetuaDB.account on
@@ -288,152 +275,11 @@ local function accountGroups(names)
   return out
 end
 
-local function buildGuild(page)
-  -- Two views: Roster (everyone, with rank, notes and the officer tools, like Blizzard's guild window) and
-  -- Perpetua (what guild sync knows: specs, gear, professions, raids).
-  guild.view = PerpetuaDB.guildView == "perpetua" and "perpetua" or "roster"
-  local viewTabs = {}
-  local function setView(v)
-    guild.view = v
-    PerpetuaDB.guildView = v
-    for k, b in pairs(viewTabs) do b:SetSelected(k == v) end
-    ns.refreshUI(true)
-  end
-  viewTabs.roster = T.button(page, "Roster", 86, function() setView("roster") end, "tab")
-  viewTabs.perpetua = T.button(page, "Perpetua", 86, function() setView("perpetua") end, "tab")
-  viewTabs.roster:SetPoint("TOPLEFT", 2, 0)
-  viewTabs.perpetua:SetPoint("LEFT", viewTabs.roster, "RIGHT", 6, 0)
-  for k, b in pairs(viewTabs) do b:SetSelected(k == guild.view) end
-  local bar = CreateFrame("Frame", nil, page)
-  bar:SetPoint("TOPLEFT", viewTabs.perpetua, "TOPRIGHT", 12, 0); bar:SetPoint("TOPRIGHT"); bar:SetHeight(28)
+ns.professionsText, ns.raidsText, ns.accountGroups = professionsText, raidsText, accountGroups
 
-  local perpetuaControls = {}
-  local search = T.searchBox(bar, 160, "Search names, specs, professions…", function(t) guild.filter = t:lower(); ns.refreshUI() end)
-  search:SetPoint("TOPLEFT", 0, 0)
-  perpetuaControls[1] = search
-  -- Filters, right to left.
-  local function toggle(label, key, after)
-    local check = CreateFrame("CheckButton", nil, page, "UICheckButtonTemplate")
-    check:SetSize(24, 24)
-    local text = T.text(page, "muted")
-    text:SetText(label)
-    check:SetScript("OnClick", function(self)
-      guild[key] = self:GetChecked() and true or false
-      if after then after() end
-      ns.refreshUI()
-    end)
-    return check, text
-  end
-  local askRoster = function() try(C_GuildInfo and C_GuildInfo.GuildRoster or GuildRoster) end
-  local c3, t3 = toggle("Without the addon", "roster", askRoster)
-  local c2, t2 = toggle("Alts separately", "alts")
-  local c1, t1 = toggle("Online now", "onlineOnly", askRoster)
-  for _, c in ipairs({ c1, t1, c2, t2, c3, t3 }) do perpetuaControls[#perpetuaControls + 1] = c end
-  guild.perpetuaControls = perpetuaControls
-  t3:SetPoint("TOPRIGHT", -26, -5); c3:SetPoint("RIGHT", t3, "LEFT", -2, 0)
-  t2:SetPoint("RIGHT", c3, "LEFT", -12, 0); c2:SetPoint("RIGHT", t2, "LEFT", -2, 0)
-  t1:SetPoint("RIGHT", c2, "LEFT", -12, 0); c1:SetPoint("RIGHT", t1, "LEFT", -2, 0)
-
-  local rosterArea = CreateFrame("Frame", nil, page)
-  rosterArea:SetPoint("TOPLEFT", 0, -38)
-  rosterArea:SetPoint("BOTTOMRIGHT")
-  ns.buildRoster(rosterArea, bar)
-  guild.rosterArea = rosterArea
-
-  local area = CreateFrame("Frame", nil, page)
-  area:SetPoint("TOPLEFT", 0, -38)
-  area:SetPoint("BOTTOMRIGHT")
-  guild.area = area
-  guild.list = List(area, {
-    { "Name", 190 }, { "Lvl", 30, "RIGHT" }, { "Spec", 130 }, { "iLvl", 34, "RIGHT" },
-    { "Professions", 150 }, { "Raids", 80 }, { "Updated", 66, "RIGHT" },
-  }, function(i)
-    if guild.sort == i then guild.desc = not guild.desc else guild.sort, guild.desc = i, i == 2 or i == 4 end
-    ns.refreshUI()
-  end)
-end
-
-local function renderGuild()
-  local roster = guild.view == "roster"
-  guild.rosterArea:SetShown(roster)
-  guild.area:SetShown(not roster)
-  for _, c in ipairs(guild.perpetuaControls) do c:SetShown(not roster) end
-  ns.showRosterControls(roster)
-  if roster then return ns.renderRoster() end
-  local online = onlineNow()
-  local all = everyone(guild.roster)
-  local byName, names = {}, {}
-  for _, e in ipairs(all) do byName[e.name] = e; names[#names + 1] = e.name end
-  local groups = accountGroups(names)
-
-  -- One row per person: the character they're on now, else the one heard from most recently.
-  local shown = {}
-  local function score(e)
-    if online[e.name] then return 2e10 end
-    return (e.rec and math.max(e.rec.pt or 0, e.rec.rt or 0, e.rec.heard or 0)) or (e.noAddon and 0) or 1
-  end
-  for _, e in ipairs(all) do
-    local group = groups[e.name]
-    if guild.alts or #group == 1 then
-      shown[#shown + 1] = { e = e, others = {} }
-    else
-      local best = e
-      for _, n in ipairs(group) do if byName[n] and score(byName[n]) > score(best) then best = byName[n] end end
-      if best == e then
-        local others = {}
-        for _, n in ipairs(group) do if n ~= e.name then others[#others + 1] = n end end
-        shown[#shown + 1] = { e = e, others = others }
-      end
-    end
-  end
-
-  local rows = {}
-  for _, row in ipairs(shown) do
-    local e = row.e
-    local p = e.profile
-    local spec = p and p.spec and p.spec.n
-    local cls = p and p.char and p.char.class
-    -- Older addons sent Forever's class-named spec ("Warlock"): show just the class then.
-    if spec and cls and spec == cls then spec = nil end
-    local specText = (spec and cls) and (safe(spec) .. " " .. safe(cls)) or cls and safe(cls) or ""
-    local profs = professionsText(p)
-    local searchText = (e.name .. " " .. table.concat(row.others, " ") .. " " .. specText .. " " .. profs):lower()
-    local isOnline = online[e.name]
-    if (guild.filter == "" or searchText:find(guild.filter, 1, true)) and (not guild.onlineOnly or isOnline) then
-      local ilvl = ns.avgItemLevel(p)
-      local stamp = e.rec and math.max(e.rec.pt or 0, e.rec.rt or 0)
-      local updated = isOnline and color(T.HEX.ok, "online")
-        or e.noAddon and color("5a6380", "no addon")
-        or (e.rec and not e.profile and e.rec.addon and ns.newer(ns.VERSION, e.rec.addon)) and color(T.HEX.warm, "old addon")
-        or e.rec and color(T.HEX.muted, ns.ago(stamp and stamp > 0 and stamp or e.rec.heard)) or ""
-      local extra = #row.others > 0 and color(T.HEX.muted, "  +" .. #row.others) or ""
-      rows[#rows + 1] = {
-        key = { e.name:lower(), e.level or 0, specText:lower(), ilvl or 0, profs:lower(), raidsText(p), isOnline and -1e11 or -(stamp or 0) },
-        cells = { T.classIcon(e.class) .. classed(e.name, e.class) .. extra, e.level or "", specText, ilvl or "", profs, raidsText(p), updated },
-        onClick = (not e.noAddon) and function() ns.selected = e.name; ns.showTab("Character") end or nil,
-        onEnter = #row.others > 0 and function(r)
-          GameTooltip:SetOwner(r, "ANCHOR_RIGHT")
-          GameTooltip:AddLine("Also plays", T.C.gold[1], T.C.gold[2], T.C.gold[3])
-          for _, n in ipairs(row.others) do
-            local o = byName[n]
-            GameTooltip:AddDoubleLine(T.classIcon(o and o.class) .. classed(n, o and o.class),
-              (o and o.level and ("Level " .. o.level) or "") .. (online[n] and "  online" or ""), 1, 1, 1, 0.64, 0.67, 0.79)
-          end
-          GameTooltip:Show()
-        end or nil,
-      }
-    end
-  end
-  local k, desc = guild.sort, guild.desc
-  table.sort(rows, function(a, b)
-    local x, y = a.key[k], b.key[k]
-    if x == y then return a.key[1] < b.key[1] end
-    if desc then return x > y end
-    return x < y
-  end)
-  ns.lastGuildRows = rows -- for the test harness
-  guild.list:SetRows(rows)
-end
+-- The Guild page itself lives in GuildUI.lua (roster, guild sync's data and the officer tools in one list).
+local function buildGuild(page) ns.buildRoster(page) end
+local function renderGuild() ns.renderRoster() end
 
 -- ---------- Character tab ----------
 
@@ -1372,7 +1218,7 @@ if not ns.FORUMS then
 end
 
 local NAV = {
-  Guild = { "INV_BannerPVP_02", "The guild roster, ranks and notes, and what guild sync knows" },
+  Guild = { "INV_BannerPVP_02", "Everyone in the guild: ranks, notes, specs, gear and professions" },
   ["Guild Info"] = { "INV_Misc_Note_01", "Message of the day, guild information and the guild log" },
   Character = { "INV_Chest_Plate16", "Gear, talents, professions and more" },
   Calendar = { "INV_Misc_PocketWatch_01", "Upcoming raids and who's coming" },
@@ -1462,7 +1308,27 @@ local function build()
   -- Content: page title and subtitle over a hairline, then the page.
   main.title = T.text(main, "page"); main.title:SetPoint("TOPLEFT", 226, -24)
   main.subtitle = T.text(main, "muted"); main.subtitle:SetPoint("TOPLEFT", main.title, "BOTTOMLEFT", 1, -4)
-  main.status = T.text(main, "muted", "RIGHT"); main.status:SetPoint("TOPRIGHT", -56, -30)
+  main.status = T.text(main, "muted", "RIGHT"); main.status:SetPoint("TOPRIGHT", -56, -50)
+  -- "Try the new look" style switch for features still being tried out: a NEW tag, the name and a switch.
+  local newRow = CreateFrame("Frame", nil, main)
+  newRow:SetSize(230, 22); newRow:SetPoint("TOPRIGHT", -56, -20)
+  main.newSwitch = T.switch(newRow, function(on) ns.setNewGuildWindow(on) end)
+  main.newSwitch:SetPoint("RIGHT")
+  local newLabel = T.text(newRow, "nav", "RIGHT"); newLabel:SetPoint("RIGHT", main.newSwitch, "LEFT", -8, 0)
+  newLabel:SetText("NEW GUILD WINDOW")
+  local tag = CreateFrame("Frame", nil, newRow); tag:SetSize(34, 14); tag:SetPoint("RIGHT", newLabel, "LEFT", -7, 0)
+  local tagBg = T.fill(tag, "BACKGROUND", T.C.gold, 1); tagBg:SetAllPoints()
+  local tagText = T.text(tag, "label", "CENTER"); tagText:SetPoint("CENTER", 0, 0); tagText:SetText("NEW")
+  tagText:SetTextColor(T.C.navy[1], T.C.navy[2], T.C.navy[3]); tagText:SetShadowColor(0, 0, 0, 0)
+  local hover = CreateFrame("Frame", nil, newRow); hover:SetPoint("TOPLEFT", tag, "TOPLEFT"); hover:SetPoint("BOTTOMRIGHT", newLabel, "BOTTOMRIGHT")
+  hover:SetScript("OnEnter", function(self)
+    GameTooltip:SetOwner(self, "ANCHOR_BOTTOM")
+    GameTooltip:AddLine("New guild window", T.C.gold[1], T.C.gold[2], T.C.gold[3])
+    GameTooltip:AddLine("The guild key (J) and the guild button on the menu bar open Perpetua's guild window instead of Blizzard's. Hold Shift for Blizzard's. Turn it off here any time.", 1, 1, 1, true)
+    GameTooltip:Show()
+  end)
+  hover:SetScript("OnLeave", function() GameTooltip:Hide() end)
+  main.newRow = newRow
   local close = T.closeButton(main, function() main:Hide() end)
   close:SetPoint("TOPRIGHT", -14, -14)
   local line = T.fill(main, "ARTWORK", T.C.gold, 0.18)
@@ -1494,6 +1360,7 @@ function ns.showTab(name)
     if tabs[n] then tabs[n]:SetSelected(n == name); tabs[n]:SetShown(not locked) end
   end
   main.syncButton:SetShown(not locked); main.sync:SetShown(not locked); main.olyRow:SetShown(not locked); main.lockedNote:SetShown(locked)
+  main.newRow:SetShown(not locked)
   main.title:SetText(name:upper())
   main.subtitle:SetText(NAV[name][2])
   main:Show()
@@ -1519,6 +1386,7 @@ function ns.refreshUI(now)
   local heard = 0
   for _ in pairs(ns.session.heard) do heard = heard + 1 end
   main.olySwitch:SetOn(ns.olympus.db().on)
+  main.newSwitch:SetOn(ns.newGuildWindow())
   local update = not ns.locked() and ns.updateAvailable()
   main.update:SetText(update and ("Update available: " .. safe(update)) or "")
   main.sync:SetText("Heard from " .. heard .. " guildmates this session. " .. ns.session.received .. " updates received.")

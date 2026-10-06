@@ -249,6 +249,7 @@ function T.searchBox(parent, width, placeholder, onChange)
   local edge = T.outline(e, 0, C.gold, 0.4)
   local hint = T.text(e, "muted")
   hint:SetPoint("LEFT", 10, 0)
+  hint:SetPoint("RIGHT", -10, 0) -- a placeholder longer than the box ends in "…" instead of running past it
   hint:SetText(placeholder or "")
   local function sync() hint:SetShown((e:GetText() or "") == "" and not e:HasFocus()) end
   e:SetScript("OnTextChanged", function(self) sync(); onChange(self:GetText() or "") end)

@@ -194,7 +194,8 @@ end
 
 -- ---------- member panel ----------
 
-local R = { showOffline = true, filter = "", sort = 6, desc = false, selected = nil } -- online first, then most recently seen
+-- Sorted by the last column (online first, then most recently seen) until a header is clicked.
+local R = { showOffline = true, alts = false, filter = "", sort = 8, desc = false, selected = nil }
 
 local function noteBox(parent, label)
   local b = CreateFrame("Button", nil, parent)
@@ -285,74 +286,170 @@ local function renderPanel(p, m)
   p:Show()
 end
 
--- ---------- roster view ----------
+-- ---------- the Guild list ----------
+-- One list: everyone on the guild roster (rank, note, last online, the officer tools) with what guild sync knows
+-- about them (spec, item level, professions, raid attunements, alts).
 
--- Builds the roster view into `area` (the Guild page's list area) with its controls on `bar`.
-function ns.buildRoster(area, bar)
+-- Builds the Guild page: controls along the top, the list, and the member panel.
+function ns.buildRoster(page)
+  local bar = CreateFrame("Frame", nil, page)
+  bar:SetPoint("TOPLEFT"); bar:SetPoint("TOPRIGHT"); bar:SetHeight(28)
+  local area = CreateFrame("Frame", nil, page)
+  area:SetPoint("TOPLEFT", 0, -38); area:SetPoint("BOTTOMRIGHT")
   R.area = area
   local holder = CreateFrame("Frame", nil, area)
   holder:SetPoint("TOPLEFT"); holder:SetPoint("BOTTOMRIGHT")
   R.holder = holder
   R.list = ns.List(holder, {
-    { "Name", 170 }, { "Lvl", 28, "RIGHT" }, { "Rank", 100 }, { "Zone", 128 }, { "Note", 150 }, { "Last online", 82, "RIGHT" },
+    { "Name", 146 }, { "Lvl", 26, "RIGHT" }, { "Rank", 84 }, { "Spec", 104 }, { "iLvl", 30, "RIGHT" },
+    { "Professions", 116 }, { "Note", 96 }, { "Last on", 62, "RIGHT" },
   }, function(i)
-    if R.sort == i then R.desc = not R.desc else R.sort, R.desc = i, i == 2 end
+    if R.sort == i then R.desc = not R.desc else R.sort, R.desc = i, (i == 2 or i == 5) end
     ns.refreshUI(true)
   end)
   R.list.header:SetClipsChildren(true)
   R.panel = buildPanel(area)
 
-  local controls = {}
-  R.search = T.searchBox(bar, 160, "Search the roster…", function(t) R.filter = t:lower(); ns.refreshUI() end)
-  controls[#controls + 1] = R.search
-  local check = CreateFrame("CheckButton", nil, bar, "UICheckButtonTemplate")
-  check:SetSize(24, 24)
-  check:SetChecked(R.showOffline)
-  check:SetScript("OnClick", function(self) R.showOffline = self:GetChecked() and true or false; ns.refreshUI(true) end)
-  local label = T.text(bar, "muted"); label:SetText("Show offline")
+  R.search = T.searchBox(bar, 190, "Search the guild…", function(t) R.filter = t:lower(); ns.refreshUI() end)
+  R.search:SetPoint("TOPLEFT", 2, 0)
+  local function toggle(label, key)
+    local check = CreateFrame("CheckButton", nil, bar, "UICheckButtonTemplate")
+    check:SetSize(24, 24)
+    check:SetChecked(R[key])
+    check:SetScript("OnClick", function(self)
+      R[key] = self:GetChecked() and true or false
+      try(C_GuildInfo.GuildRoster)
+      ns.refreshUI(true)
+    end)
+    local text = T.text(bar, "muted"); text:SetText(label)
+    return check, text
+  end
+  local c1, t1 = toggle("Show offline", "showOffline")
+  local c2, t2 = toggle("Alts separately", "alts")
+  c1:SetPoint("LEFT", R.search, "RIGHT", 12, 0); t1:SetPoint("LEFT", c1, "RIGHT", 2, 0)
+  c2:SetPoint("LEFT", t1, "RIGHT", 12, 0); t2:SetPoint("LEFT", c2, "RIGHT", 2, 0)
   R.invite = T.button(bar, "Invite", 90, function() A.invite() end)
   R.invite:SetPoint("TOPRIGHT", -26, -1)
-  label:SetPoint("RIGHT", R.invite, "LEFT", -14, 0); check:SetPoint("RIGHT", label, "LEFT", -2, 0)
-  R.count = T.text(bar, "muted", "RIGHT"); R.count:SetPoint("RIGHT", check, "LEFT", -14, 0)
-  for _, c in ipairs({ check, label, R.invite, R.count }) do controls[#controls + 1] = c end
-  R.controls = controls
-  return R
+  R.count = T.text(bar, "muted", "RIGHT"); R.count:SetPoint("RIGHT", R.invite, "LEFT", -14, 0)
+  page:SetScript("OnShow", function() try(C_GuildInfo.GuildRoster) end)
 end
 
-function ns.showRosterControls(on)
-  for _, c in ipairs(R.controls or {}) do c:SetShown(on) end
-  if on then R.invite:SetShown(try(CanGuildInvite) and true or false) end
+-- Guild sync's knowledge of a player, for the list and the tooltip.
+local function syncInfo(name)
+  local rec = ns.players()[name]
+  local p = type(rec) == "table" and rec.profile or nil
+  local spec = p and p.spec and p.spec.n
+  local cls = p and p.char and p.char.class
+  if spec and cls and spec == cls then spec = nil end -- older addons sent Forever's class-named spec
+  return {
+    rec = type(rec) == "table" and rec or nil, profile = p,
+    spec = spec and safe(spec) or "", ilvl = p and ns.avgItemLevel(p),
+    profs = ns.professionsText(p), raids = ns.raidsText(p),
+  }
+end
+
+local function addonStatus(info)
+  local rec = info.rec
+  if not rec then return color("5a6380", "no addon") end
+  if not info.profile and rec.addon and ns.newer(ns.VERSION, rec.addon) then return color(T.HEX.warm, "old addon " .. safe(rec.addon)) end
+  local stamp = math.max(rec.pt or 0, rec.rt or 0)
+  return color(T.HEX.muted, "profile from " .. ns.ago(stamp > 0 and stamp or rec.heard))
+end
+
+local function rowTooltip(row, d)
+  local m, info = d.member, d.info
+  GameTooltip:SetOwner(row, "ANCHOR_RIGHT")
+  GameTooltip:AddLine(T.classIcon(m.classFile) .. " " .. color(ns.classColor(m.classFile), safe(m.name)))
+  local where = (m.zone ~= "" and safe(m.zone) or "") .. (m.zone ~= "" and "  ·  " or "") .. lastOnlineText(m)
+  if where ~= "" then GameTooltip:AddLine(where, 0.64, 0.67, 0.79) end
+  if m.note ~= "" then GameTooltip:AddLine("Note: " .. safe(m.note), 1, 1, 1, true) end
+  if d.officer and m.officerNote ~= "" then GameTooltip:AddLine("Officer note: " .. safe(m.officerNote), 1, 1, 1, true) end
+  if info.raids:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "") ~= "" then GameTooltip:AddLine("Attuned: " .. info.raids, 1, 1, 1) end
+  GameTooltip:AddLine(addonStatus(info), 1, 1, 1)
+  if #d.others > 0 then
+    GameTooltip:AddLine(" ")
+    GameTooltip:AddLine("Also plays", T.C.gold[1], T.C.gold[2], T.C.gold[3])
+    for _, o in ipairs(d.others) do
+      GameTooltip:AddDoubleLine(T.classIcon(o.classFile) .. color(ns.classColor(o.classFile), safe(o.name)),
+        (o.level and ("Level " .. o.level) or "") .. (o.online and "  online" or ""), 1, 1, 1, 0.64, 0.67, 0.79)
+    end
+  end
+  GameTooltip:Show()
+end
+
+-- Before the roster has loaded (just after login), what guild sync heard, so the page isn't empty.
+local function fromSync()
+  local list = {}
+  for name, rec in pairs(ns.players()) do
+    if type(rec) == "table" then
+      list[#list + 1] = { name = name, full = name, rank = "", rankOrder = 99, level = ns.levelOf(name, rec.level),
+        classFile = rec.class, zone = "", note = "", officerNote = "", online = false, mobile = false,
+        last = {}, away = 1e9, noRoster = true }
+    end
+  end
+  return list
 end
 
 function ns.renderRoster()
   local all = members()
-  local online, rows, selected = 0, {}, nil
-  local canViewOfficer = try(C_GuildInfo.CanViewOfficerNote)
+  if #all == 0 then all = fromSync() end
+  local byName, names = {}, {}
+  for _, m in ipairs(all) do byName[m.name] = m; names[#names + 1] = m.name end
+  local groups = ns.accountGroups(names)
+
+  -- One row per person unless "Alts separately": the character they're on now, else the one seen last.
+  local shown, online = {}, 0
   for _, m in ipairs(all) do
     if m.online then online = online + 1 end
+    local group = groups[m.name] or { m.name }
+    if R.alts or #group == 1 then
+      shown[#shown + 1] = { m = m, others = {} }
+    else
+      local best = m
+      for _, n in ipairs(group) do
+        local o = byName[n]
+        if o and (o.away < best.away or (o.away == best.away and n < best.name)) then best = o end
+      end
+      if best == m then
+        local others = {}
+        for _, n in ipairs(group) do if n ~= m.name and byName[n] then others[#others + 1] = byName[n] end end
+        shown[#shown + 1] = { m = m, others = others }
+      end
+    end
+  end
+
+  local officer = try(C_GuildInfo.CanViewOfficerNote)
+  local rows, selected = {}, nil
+  for _, row in ipairs(shown) do
+    local m, others = row.m, row.others
     if R.selected and m.guid == R.selected then selected = m end
-    local search = (m.name .. " " .. m.rank .. " " .. m.zone .. " " .. m.note .. " " .. (m.className or "")):lower()
-    if (R.showOffline or m.online or m.mobile) and (R.filter == "" or search:find(R.filter, 1, true)) then
+    local info = syncInfo(m.name)
+    local anyOnline = m.online or m.mobile
+    for _, o in ipairs(others) do anyOnline = anyOnline or o.online end
+    local text = (m.name .. " " .. m.rank .. " " .. m.zone .. " " .. m.note .. " " .. (m.className or "") .. " "
+      .. info.spec .. " " .. info.profs) :lower()
+    for _, o in ipairs(others) do text = text .. " " .. o.name:lower() end
+    if (R.showOffline or anyOnline) and (R.filter == "" or text:find(R.filter, 1, true)) then
       local dim = not m.online
-      local name = T.classIcon(m.classFile) .. color(ns.classColor(m.classFile), safe(m.name))
+      local extra = #others > 0 and color(T.HEX.muted, "  +" .. #others) or ""
       rows[#rows + 1] = {
-        key = { m.name:lower(), m.level or 0, m.rankOrder, m.zone:lower(), m.note:lower(), m.away },
+        key = { m.name:lower(), m.level or 0, m.rankOrder, info.spec:lower(), info.ilvl or 0, info.profs:lower(), m.note:lower(), m.away },
         cells = {
-          name, m.level or "", dim and color(T.HEX.muted, safe(m.rank)) or safe(m.rank),
-          color(dim and "7a8298" or T.HEX.text, safe(m.zone)), color(T.HEX.muted, safe(m.note)), lastOnlineText(m),
+          T.classIcon(m.classFile) .. color(ns.classColor(m.classFile), safe(m.name)) .. extra,
+          m.level or "", dim and color(T.HEX.muted, safe(m.rank)) or safe(m.rank), info.spec, info.ilvl or "",
+          info.profs, color(T.HEX.muted, safe(m.note)), lastOnlineText(m),
         },
-        member = m,
-        onClick = function(d, button, row)
-          if button == "RightButton" then memberMenu(row, d.member) return end
+        member = m, info = info, others = others, officer = officer,
+        onClick = function(d, button, r)
+          if d.member.noRoster then
+            if d.info.profile then ns.selected = d.member.name; ns.showTab("Character") end
+            return
+          end
+          if button == "RightButton" then memberMenu(r, d.member) return end
           R.selected = (R.selected ~= d.member.guid) and d.member.guid or nil
           ns.refreshUI(true)
         end,
-        onEnter = (canViewOfficer and m.officerNote ~= "") and function(row, d)
-          GameTooltip:SetOwner(row, "ANCHOR_RIGHT")
-          GameTooltip:AddLine(d.member.name, T.C.gold[1], T.C.gold[2], T.C.gold[3])
-          GameTooltip:AddLine("Officer note: " .. safe(d.member.officerNote), 1, 1, 1, true)
-          GameTooltip:Show()
-        end or nil,
+        onEnter = rowTooltip,
       }
     end
   end
@@ -423,14 +520,14 @@ function ns.buildGuildInfo(page)
   logBox:SetPoint("TOPLEFT", 0, -22); logBox:SetPoint("BOTTOMRIGHT")
   G.log = scrollText(logBox, "small"); G.log:SetPoint("TOPLEFT", 10, -8); G.log:SetPoint("BOTTOMRIGHT", -28, 8)
 
-  -- Bottom row: "Use default guild UI", then leave / disband on the right.
-  local switch = T.switch(page, function(on) ns.setDefaultGuildUI(on, true) end)
+  -- Bottom row: the New guild window switch (also at the top of the window), then leave / disband.
+  local switch = T.switch(page, function(on) ns.setNewGuildWindow(on, true) end)
   switch:SetPoint("BOTTOMLEFT", 2, 8)
   G.switch = switch
   local sl = T.text(page, "small"); sl:SetPoint("LEFT", switch, "RIGHT", 10, 0)
-  sl:SetText("Use default guild UI")
+  sl:SetText("New guild window")
   local hint = T.text(page, "muted"); hint:SetPoint("LEFT", sl, "RIGHT", 8, 0)
-  hint:SetText("(the guild key and button open Blizzard's guild window)")
+  hint:SetText("(the guild key and button open this; Shift for Blizzard's)")
   G.disband = T.button(page, "Disband", 100, function() A.disband() end, "tab")
   G.disband:SetPoint("BOTTOMRIGHT", 0, 4)
   G.leave = T.button(page, "Leave guild", 120, function() A.leave() end, "tab")
@@ -466,7 +563,7 @@ function ns.renderGuildInfo()
     end
   end
   G.log:SetText(#lines > 0 and table.concat(lines, "\n") or color(T.HEX.muted, "Nothing in the log yet."))
-  G.switch:SetOn(ns.useDefaultGuildUI())
+  G.switch:SetOn(ns.newGuildWindow())
   G.disband:SetShown(try(IsGuildLeader) and true or false)
 end
 
