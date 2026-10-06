@@ -3,7 +3,8 @@
 ## 2.11.0
 
 ### New: the guild window, in Perpetua
-- The guild key (J) and the guild button on the menu bar now open Perpetua. Hold **Shift** for Blizzard's guild window. Turn it off at the bottom of the **Guild Info** page.
+- The guild key (J) and the guild button on the menu bar now open Perpetua. Hold **Shift** for Blizzard's guild window.
+- Rather keep Blizzard's guild window? Tick **Use default guild UI** in Options > AddOns > Perpetua, flip it at the bottom of the **Guild Info** page, or type `/ppta guildui`. Everything else in Perpetua works the same either way.
 - **Guild** has a **Roster** view: everyone in the guild with level, rank, zone, note and when they were last online, online first. Search it, show or hide offline members, and sort any column.
 - Click a member for their panel: rank (pick a new one if you're allowed), public and officer notes (click to edit), and Whisper, Group invite, Profile, Make leader and Remove. Right-click a member for the same in a menu.
 - **Invite** adds someone to the guild by name.

@@ -423,18 +423,14 @@ function ns.buildGuildInfo(page)
   logBox:SetPoint("TOPLEFT", 0, -22); logBox:SetPoint("BOTTOMRIGHT")
   G.log = scrollText(logBox, "small"); G.log:SetPoint("TOPLEFT", 10, -8); G.log:SetPoint("BOTTOMRIGHT", -28, 8)
 
-  -- Bottom row: the takeover switch, then leave / disband on the right.
-  local switch = T.switch(page, function(on)
-    PerpetuaDB.guildTakeover = on
-    if ns.applyGuildTakeover then ns.applyGuildTakeover() end
-    ns.refreshUI(true)
-  end)
+  -- Bottom row: "Use default guild UI", then leave / disband on the right.
+  local switch = T.switch(page, function(on) ns.setDefaultGuildUI(on, true) end)
   switch:SetPoint("BOTTOMLEFT", 2, 8)
   G.switch = switch
   local sl = T.text(page, "small"); sl:SetPoint("LEFT", switch, "RIGHT", 10, 0)
-  sl:SetText("Guild key and guild button open Perpetua")
+  sl:SetText("Use default guild UI")
   local hint = T.text(page, "muted"); hint:SetPoint("LEFT", sl, "RIGHT", 8, 0)
-  hint:SetText("(hold Shift for Blizzard's guild window)")
+  hint:SetText("(the guild key and button open Blizzard's guild window)")
   G.disband = T.button(page, "Disband", 100, function() A.disband() end, "tab")
   G.disband:SetPoint("BOTTOMRIGHT", 0, 4)
   G.leave = T.button(page, "Leave guild", 120, function() A.leave() end, "tab")
@@ -470,7 +466,7 @@ function ns.renderGuildInfo()
     end
   end
   G.log:SetText(#lines > 0 and table.concat(lines, "\n") or color(T.HEX.muted, "Nothing in the log yet."))
-  G.switch:SetOn(PerpetuaDB.guildTakeover ~= false)
+  G.switch:SetOn(ns.useDefaultGuildUI())
   G.disband:SetShown(try(IsGuildLeader) and true or false)
 end
 
