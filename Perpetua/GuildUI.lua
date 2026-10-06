@@ -336,8 +336,8 @@ function ns.buildRoster(page)
   holder:SetPoint("TOPLEFT"); holder:SetPoint("BOTTOMRIGHT")
   R.holder = holder
   R.list = ns.List(holder, {
-    { "Name", 146 }, { "Lvl", 26, "RIGHT" }, { "Rank", 84, pill = true }, { "Spec", 104 }, { "iLvl", 30, "RIGHT" },
-    { "Professions", 116 }, { "Note", 96 }, { "Last on", 62, "RIGHT" },
+    { "Name", 146 }, { "Lvl", 26, "RIGHT" }, { "Rank", 102, pill = true }, { "Spec", 104 }, { "iLvl", 30, "RIGHT" },
+    { "Professions", 108 }, { "Note", 86 }, { "Last on", 62, "RIGHT" },
   }, function(i)
     if R.sort == i then R.desc = not R.desc else R.sort, R.desc = i, (i == 2 or i == 5) end
     ns.refreshUI(true)

@@ -101,7 +101,7 @@ local function List(parent, cols, onSort)
       fs:SetWidth(col[2])
       r.cells[c] = fs
       if col.pill then
-        local pill = T.pill(r)
+        local pill = T.pill(r, col[2])
         pill:SetPoint("LEFT", cx, 0)
         r.pills[c] = pill
       end
@@ -1324,7 +1324,9 @@ local function setStats(list)
     local c = item[3] == "ok" and { 0.561, 0.820, 0.541 } or T.C.pale
     st.n:SetTextColor(c[1], c[2], c[3])
     st.l:ClearAllPoints(); st.n:ClearAllPoints()
-    if prev then st.l:SetPoint("RIGHT", prev, "LEFT", -24, 0) else st.l:SetPoint("BOTTOMRIGHT", main, "TOPRIGHT", -26, -112) end
+    -- Every label on the same line: the first at a fixed spot, the rest left of the number before them, level
+    -- with it (the number sits 2px lower than its label).
+    if prev then st.l:SetPoint("BOTTOMRIGHT", prev, "BOTTOMLEFT", -24, 2) else st.l:SetPoint("BOTTOMRIGHT", main, "TOPRIGHT", -26, -112) end
     st.n:SetPoint("BOTTOMRIGHT", st.l, "BOTTOMLEFT", -7, -2)
     st.n:Show(); st.l:Show()
     prev = st.n

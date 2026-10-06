@@ -133,17 +133,20 @@ function T.badge(parent)
 end
 
 -- A small outlined tag (rank in the guild list): gold for officers, quiet otherwise.
-function T.pill(parent)
+-- maxWidth (the column's width) caps it: a longer rank name ends in "…" rather than running into the next column.
+function T.pill(parent, maxWidth)
   local p = CreateFrame("Frame", nil, parent)
   p:SetHeight(17)
   p.edge = T.outline(p, 0, C.gold, 0.32)
-  p.text = T.text(p, "badge", "CENTER"); p.text:SetPoint("CENTER", 0, 0)
+  p.text = T.text(p, "badge", "CENTER"); p.text:SetPoint("LEFT", 7, 0); p.text:SetPoint("RIGHT", -7, 0)
   function p:Set(text, gold)
     self.text:SetText((text or ""):upper())
     local c = gold and C.pale or C.muted
     self.text:SetTextColor(c[1], c[2], c[3])
     self.edge:SetColor(C.gold, gold and 1 or 0.32)
-    self:SetWidth(math.max(20, (self.text:GetStringWidth() or 0) + 14))
+    local w = math.max(20, (self.text:GetStringWidth() or 0) + 14)
+    if maxWidth then w = math.min(w, maxWidth) end
+    self:SetWidth(w)
   end
   return p
 end

@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.11.1
+
+### Fixes
+- Long rank names (Guild Master) no longer run into the Spec column on the Guild page; the Rank column is wider, and a rank too long for it ends in "…".
+- The members, online and with the addon numbers at the top of the Guild page line up.
+
 ## 2.11.0
 
 ### A new look
