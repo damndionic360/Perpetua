@@ -9,6 +9,8 @@ local try = ns.try
 
 -- ObjectiveTrackerModuleMixin's lineSpacing, fromBlockOffsetY and blockOffsetX.
 local LINE_SPACING, BLOCK_GAP, INDENT = 4, 10, 20
+-- A thin gold rule above the header (fading out to the right) sets the totals apart from the recipes above.
+local RULE_GAP = 6
 
 local frame, rows = nil, {}
 local waitingForNames = false
@@ -89,7 +91,7 @@ local function update()
   frame:SetPoint("LEFT", m.ContentsFrame, "LEFT", INDENT, 0)
   frame:SetPoint("RIGHT", m.ContentsFrame, "RIGHT")
 
-  local height = setText(frame.Header, "All tracked recipes", OBJECTIVE_TRACKER_COLOR.Header)
+  local height = 1 + RULE_GAP + setText(frame.Header, "Totals: All Tracked Recipes", OBJECTIVE_TRACKER_COLOR.Header)
   local anchor = frame.Header
   for i, item in ipairs(list) do
     local r = row(i)
@@ -117,8 +119,14 @@ local function setup()
   if frame or not (m and m.EndLayout and C_TradeSkillUI and C_TradeSkillUI.GetRecipesTracked) then return end
   frame = CreateFrame("Frame", nil, m.ContentsFrame)
   frame:Hide()
+  frame.Rule = frame:CreateTexture(nil, "ARTWORK")
+  frame.Rule:SetColorTexture(1, 1, 1, 1)
+  frame.Rule:SetGradient("HORIZONTAL", CreateColor(1, 0.82, 0, 0.6), CreateColor(1, 0.82, 0, 0))
+  frame.Rule:SetHeight(1)
+  frame.Rule:SetPoint("TOPLEFT")
+  frame.Rule:SetPoint("RIGHT", -20, 0)
   frame.Header = frame:CreateFontString(nil, "ARTWORK", "ObjectiveTrackerLineFont")
-  frame.Header:SetPoint("TOPLEFT")
+  frame.Header:SetPoint("TOPLEFT", frame.Rule, "BOTTOMLEFT", 0, -RULE_GAP)
   frame.Header:SetPoint("RIGHT")
   hooksecurefunc(m, "EndLayout", function() try(update) end)
   -- An item name that wasn't cached yet shows as "…" until the client has it.
