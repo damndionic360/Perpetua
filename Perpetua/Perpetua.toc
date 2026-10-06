@@ -21,6 +21,7 @@ Loot.lua
 Forums.lua
 Olympus.lua
 RecipeTotals.lua
+Roster.lua
 UI.lua
 Minimap.lua
 Core.lua
