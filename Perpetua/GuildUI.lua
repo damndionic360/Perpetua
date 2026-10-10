@@ -290,12 +290,18 @@ local function renderPanel(p, m, others, info)
   end
   local show = {
     -- Promote and Demote stay put for officers (greyed out when that move isn't possible) so the panel doesn't shift.
-    whisper = not m.isSelf, group = not m.isSelf and m.online, promote = r.ranks, demote = r.ranks,
+    whisper = not m.isSelf, group = not m.isSelf, promote = r.ranks, demote = r.ranks,
     profile = true, leader = r.leader, remove = r.remove, leave = m.isSelf,
   }
-  local order = {}
-  for _, key in ipairs({ "whisper", "group", "promote", "demote", "profile", "leader", "remove", "leave" }) do
-    if show[key] then order[#order + 1] = key else p.buttons[key]:Hide() end
+  -- Fixed pairs, one pair per row, so related buttons stay side by side whatever else is shown.
+  local PAIRS = { { "whisper", "group" }, { "promote", "demote" }, { "profile", "leader" }, { "remove", "leave" } }
+  local rowsShown = {}
+  for _, pair in ipairs(PAIRS) do
+    local row = {}
+    for _, key in ipairs(pair) do
+      if show[key] then row[#row + 1] = key else p.buttons[key]:Hide() end
+    end
+    if #row > 0 then rowsShown[#rowsShown + 1] = row end
   end
   -- Our own arrows (Media/arrow-*.tga, tinted gold): the button font has no arrow characters.
   local function arrow(dir) return "|TInterface\\AddOns\\Perpetua\\Media\\arrow-" .. dir .. ":9:9:0:0:32:32:0:32:0:32:212:175:55|t " end
@@ -308,13 +314,15 @@ local function renderPanel(p, m, others, info)
   p.buttons.promote:SetUsable(r.promote, "Can't promote " .. m.name .. " further: the next rank up is yours or above, or your rank can't promote.")
   p.buttons.demote:SetUsable(r.demote, m.rankOrder >= (ns.num(try(GuildControlGetNumRanks)) or 0)
     and (m.name .. " is already at the lowest rank.") or ("Can't demote " .. m.name .. ": your rank can't demote."))
-  local rows = math.ceil(#order / 2)
-  for i, key in ipairs(order) do
-    local b = p.buttons[key]
-    local col, row = (i - 1) % 2, math.floor((i - 1) / 2)
-    b:ClearAllPoints()
-    b:SetPoint("BOTTOMLEFT", 16 + col * 116, 14 + (rows - 1 - row) * 32)
-    b:Show()
+  p.buttons.group:SetUsable(m.online, m.name .. " is offline.")
+  local rows = #rowsShown
+  for row, keys in ipairs(rowsShown) do
+    for col, key in ipairs(keys) do
+      local b = p.buttons[key]
+      b:ClearAllPoints()
+      b:SetPoint("BOTTOMLEFT", 16 + (col - 1) * 116, 14 + (rows - row) * 32)
+      b:Show()
+    end
   end
   p:Show()
 end

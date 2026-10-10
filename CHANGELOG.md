@@ -4,7 +4,7 @@
 
 ### Fixes: guild officer tools work again
 - Forever blocks addons from changing ranks, removing members, making a new leader, leaving or disbanding, and from changing notes, the message of the day and guild info ("blocked from an action only available to the Blizzard UI"). Those buttons now go through Blizzard's own secure guild commands (/gpromote, /gdemote, /gremove, /gleader, /gquit, /gdisband) on your click, exactly as if you typed them.
-- **Promote** and **Demote** move one rank per click; the buttons name the rank they move to, and stay in place greyed out (with the reason on hover) when that move isn't possible. Profile is always on the member panel too, greyed out for members without the addon. In the right-click menu, "Change rank…" opens the member panel.
+- **Promote** and **Demote** move one rank per click; the buttons name the rank they move to, and stay in place greyed out (with the reason on hover) when that move isn't possible. Profile is always on the member panel too, greyed out for members without the addon. The panel's buttons sit in fixed pairs (Whisper/Invite, Promote/Demote, Profile/Make leader), and Invite greys out for offline members instead of disappearing. In the right-click menu, "Change rank…" opens the member panel.
 - Notes, the message of the day and guild information open **Blizzard's guild window**, where the game allows the edit; the Perpetua window steps aside while it's open.
 - These need you out of combat (the game won't move its secure buttons in combat).
 
