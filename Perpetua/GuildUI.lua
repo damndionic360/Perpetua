@@ -297,8 +297,10 @@ local function renderPanel(p, m, others, info)
   for _, key in ipairs({ "whisper", "group", "promote", "demote", "profile", "leader", "remove", "leave" }) do
     if show[key] then order[#order + 1] = key else p.buttons[key]:Hide() end
   end
-  p.buttons.promote.label:SetText(r.promote and ("▲ " .. rankName(m.rankOrder - 1)):upper() or "PROMOTE")
-  p.buttons.demote.label:SetText(r.demote and ("▼ " .. rankName(m.rankOrder + 1)):upper() or "DEMOTE")
+  -- Our own arrows (Media/arrow-*.tga, tinted gold): the button font has no arrow characters.
+  local function arrow(dir) return "|TInterface\\AddOns\\Perpetua\\Media\\arrow-" .. dir .. ":9:9:0:0:32:32:0:32:0:32:212:175:55|t " end
+  p.buttons.promote.label:SetText(r.promote and (arrow("up") .. rankName(m.rankOrder - 1):upper()) or "PROMOTE")
+  p.buttons.demote.label:SetText(r.demote and (arrow("down") .. rankName(m.rankOrder + 1):upper()) or "DEMOTE")
   p.buttons.promote:SetUsable(r.promote, "Can't promote " .. m.name .. " further: the next rank up is yours or above, or your rank can't promote.")
   p.buttons.demote:SetUsable(r.demote, m.rankOrder >= (ns.num(try(GuildControlGetNumRanks)) or 0)
     and (m.name .. " is already at the lowest rank.") or ("Can't demote " .. m.name .. ": your rank can't demote."))
