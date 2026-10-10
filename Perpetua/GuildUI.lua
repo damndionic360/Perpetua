@@ -291,7 +291,7 @@ local function renderPanel(p, m, others, info)
   local show = {
     -- Promote and Demote stay put for officers (greyed out when that move isn't possible) so the panel doesn't shift.
     whisper = not m.isSelf, group = not m.isSelf and m.online, promote = r.ranks, demote = r.ranks,
-    profile = ns.players()[m.name] ~= nil, leader = r.leader, remove = r.remove, leave = m.isSelf,
+    profile = true, leader = r.leader, remove = r.remove, leave = m.isSelf,
   }
   local order = {}
   for _, key in ipairs({ "whisper", "group", "promote", "demote", "profile", "leader", "remove", "leave" }) do
@@ -301,6 +301,10 @@ local function renderPanel(p, m, others, info)
   local function arrow(dir) return "|TInterface\\AddOns\\Perpetua\\Media\\arrow-" .. dir .. ":9:9:0:0:32:32:0:32:0:32:212:175:55|t " end
   p.buttons.promote.label:SetText(r.promote and (arrow("up") .. rankName(m.rankOrder - 1):upper()) or "PROMOTE")
   p.buttons.demote.label:SetText(r.demote and (arrow("down") .. rankName(m.rankOrder + 1):upper()) or "DEMOTE")
+  -- Profile is always there, greyed out for members without the addon (nothing to show yet).
+  local rec = ns.players()[m.name]
+  p.buttons.profile:SetUsable(type(rec) == "table" and rec.profile ~= nil,
+    m.name .. " doesn't have the Perpetua addon yet (or hasn't been online with it), so there's no profile to show.")
   p.buttons.promote:SetUsable(r.promote, "Can't promote " .. m.name .. " further: the next rank up is yours or above, or your rank can't promote.")
   p.buttons.demote:SetUsable(r.demote, m.rankOrder >= (ns.num(try(GuildControlGetNumRanks)) or 0)
     and (m.name .. " is already at the lowest rank.") or ("Can't demote " .. m.name .. ": your rank can't demote."))
