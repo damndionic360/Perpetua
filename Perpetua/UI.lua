@@ -715,7 +715,7 @@ local function showNewRaid()
       local t, why = f:Start()
       if not t then f.hint:SetText(color("e06666", why)) return end
       local r = ns.RAIDS[f.ri]
-      local hours = tonumber((f.hours:GetText() or ""):gsub(",", ".")) or 3
+      local hours = tonumber((string.gsub(f.hours:GetText() or "", ",", "."))) or 3
       local ok, err = ns.createRaid({
         instance = r[1], title = (f.title:GetText() or "") ~= "" and f.title:GetText() or r[1], t = t,
         dur = math.floor(math.max(0.25, math.min(12, hours)) * 60 + 0.5), size = tonumber(f.size:GetText()) or r[2],
