@@ -34,7 +34,10 @@ blizzard:Hide() -- bindings click it while hidden; it only shows while floating 
 -- Our buttons can't hold them, and the client won't anchor protected frames to ours, so on hover the secure button
 -- goes onto UIParent exactly over ours and takes the click. In combat it can't move, so our button's own click says so.
 local action = CreateFrame("Button", "PerpetuaGuildAction", UIParent, "SecureActionButtonTemplate")
-action:RegisterForClicks("AnyUp")
+-- Act on the mouse-up of the click. Without useOnKeyDown the template follows the ActionButtonUseKeyDown setting
+-- (on by default: act on the down), and a button registered only for up then never acts.
+action:RegisterForClicks("AnyUp", "AnyDown")
+action:SetAttribute("useOnKeyDown", false)
 action:SetAttribute("type", "macro")
 action:Hide()
 
@@ -49,8 +52,9 @@ local function float(secure, target)
   secure:ClearAllPoints()
   secure:SetPoint("BOTTOMLEFT", UIParent, "BOTTOMLEFT", left * k, bottom * k)
   secure:SetSize(w * k, h * k)
-  secure:SetFrameStrata(target:GetFrameStrata())
-  secure:SetFrameLevel(target:GetFrameLevel() + 10)
+  -- Top layer, so nothing of ours sits over it (it only shows while the mouse is on our button, which was on top).
+  secure:SetFrameStrata("FULLSCREEN_DIALOG")
+  secure:SetFrameLevel(math.min(target:GetFrameLevel() + 50, 9000))
   secure:Show()
 end
 local function onEnter(self)
@@ -74,7 +78,9 @@ end
 -- The Perpetua window steps aside so Blizzard's has the screen.
 blizzard:SetScript("PreClick", function() if hoverSecure == blizzard and PerpetuaFrame then PerpetuaFrame:Hide() end end)
 -- After a guild command: whatever our button wants to do next (close a dialog, refresh the roster).
-action:SetScript("PostClick", function(self)
+action:SetScript("PostClick", function(self, _, down)
+  if down then return end -- the action happens on the up
+  if ns.DEV then print("|cffd4af37Perpetua|r (dev): ran " .. tostring(self:GetAttribute("macrotext"))) end
   local target = hovering
   if target and target.secureAfter then target.secureAfter() end
   if not InCombatLockdown() then onLeave(self) end
