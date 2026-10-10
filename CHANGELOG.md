@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.13.0
+
+### Fixes: guild officer tools work again
+- Forever only lets Blizzard's own UI set a rank directly, remove by character ID, or change notes, the message of the day and guild info, so those buttons failed. Ranks now change with **Promote** and **Demote** (one rank per click; the buttons name the rank they move to), and Remove uses the guild's uninvite.
+- Notes, the message of the day and guild information open **Blizzard's guild window**, where the game allows the edit. Our buttons open it through a secure click, so Blizzard's window keeps working as normal; the Perpetua window steps aside while it's open.
+
+### New
+- **Guild Control** button (Guild page and Guild Info, for officers): Blizzard's window for rank names and permissions, adding and removing ranks, and guild bank tabs.
+- **Blizzard UI** button on the Guild page opens Blizzard's guild window.
+
 ## 2.12.0
 
 ### New: schedule raids in game (officers)

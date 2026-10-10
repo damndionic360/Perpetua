@@ -23,6 +23,48 @@ blizzard:RegisterForClicks("AnyUp", "AnyDown")
 blizzard:SetAttribute("type", "click")
 blizzard:SetAttribute("useOnKeyDown", false)
 
+blizzard:Hide() -- bindings click it while hidden; it only shows while floating over one of our buttons (below)
+
+-- Buttons in the Perpetua window that open Blizzard's guild window (notes, message of the day, guild info: the
+-- game only lets Blizzard's own UI change those). Our buttons can't click Blizzard's securely, so on hover the secure
+-- button above moves over ours and takes the click itself. In combat it can't move, so the click just says so.
+local hovering
+local function float(target)
+  if InCombatLockdown() or not GuildMicroButton then return end
+  hovering = target
+  blizzard:ClearAllPoints()
+  blizzard:SetAllPoints(target)
+  blizzard:SetFrameStrata(target:GetFrameStrata())
+  blizzard:SetFrameLevel(target:GetFrameLevel() + 10)
+  blizzard:Show()
+end
+blizzard:SetScript("OnEnter", function(self)
+  if not hovering then return end
+  try(hovering.LockHighlight, hovering)
+  GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+  GameTooltip:SetText(hovering.blizzardTitle or "Blizzard's guild window", 0.83, 0.69, 0.22)
+  GameTooltip:AddLine(hovering.blizzardTip or "Opens Blizzard's guild window.", 1, 1, 1, true)
+  GameTooltip:Show()
+end)
+blizzard:SetScript("OnLeave", function(self)
+  if hovering then try(hovering.UnlockHighlight, hovering) end
+  GameTooltip:Hide()
+  hovering = nil
+  if not InCombatLockdown() then self:Hide(); self:ClearAllPoints() end
+end)
+-- The Perpetua window steps aside so Blizzard's has the screen.
+blizzard:SetScript("PreClick", function() if hovering and PerpetuaFrame then PerpetuaFrame:Hide() end end)
+
+function ns.opensBlizzardGuild(button, title, tip)
+  button.blizzardTitle, button.blizzardTip = title, tip
+  button:HookScript("OnEnter", function(self) float(self) end)
+  -- Only reached when the secure button wasn't over it (in combat, or no guild button on this client).
+  button:HookScript("OnClick", function()
+    print("|cffd4af37Perpetua|r: Blizzard's guild window can only be opened from here out of combat. "
+      .. "Shift + your guild key (J) opens it any time.")
+  end)
+end
+
 local overlay -- over GuildMicroButton
 
 function ns.newGuildWindow() return PerpetuaDB.guildTakeover == true end

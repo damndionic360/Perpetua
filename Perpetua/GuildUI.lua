@@ -3,13 +3,16 @@
 -- inviting, and the Guild Info page (message of the day, guild information, the guild event log, leave and
 -- disband). GuildTakeover.lua makes the guild key and button open it.
 --
--- Every action goes through the same calls and permission checks as Blizzard's Communities guild UI
--- (Blizzard_Communities/GuildRoster.lua, GuildInfo.lua, StaticPopup GameDialogDefs.lua on the Forever client),
--- with our own dialogs in place of StaticPopups, which addon code would taint.
+-- Every action uses the same permission checks as Blizzard's Communities guild UI (Blizzard_Communities/GuildRoster.lua,
+-- GuildInfo.lua on the Forever client), with our own dialogs in place of StaticPopups, which addon code would taint.
+--
+-- What addons may call: the Forever client marks C_GuildInfo.SetGuildRankOrder, RemoveFromGuild, SetNote, SetMOTD
+-- and SetInfoText "HasRestrictions" (Blizzard's UI only; Blizzard_APIDocumentationGenerated/GuildInfoDocumentation.lua).
+-- So ranks change one step at a time with Promote/Demote, removing uses Uninvite (by name), and notes, the message of
+-- the day and guild info are edited in Blizzard's guild window, which our buttons open through a secure click
+-- (GuildTakeover.lua ns.opensBlizzardGuild). Guild Control (rank names, permissions, bank tabs) is Blizzard's window.
 local _, ns = ...
 local try, safe, T = ns.try, ns.safe, ns.T
-
-local NOTE_MAX, MOTD_MAX, INFO_MAX = 31, 255, 500
 
 local function color(hex, s) return "|cff" .. hex .. s .. "|r" end
 local function say(msg) print("|cffd4af37Perpetua|r: " .. msg) end
@@ -71,9 +74,9 @@ local function rights(m)
   local mine, maxRank = myRankOrder(), ns.num(try(GuildControlGetNumRanks)) or 0
   local promote, demote = try(CanGuildPromote), try(CanGuildDemote)
   return {
-    rank = not m.isSelf and ((promote and m.rankOrder > mine + 1) or (demote and m.rankOrder < maxRank and m.rankOrder > mine)),
-    highest = promote and (mine + 1) or m.rankOrder,
-    lowest = demote and maxRank or m.rankOrder,
+    -- One rank up (never to your own rank or above) or one down.
+    promote = not m.isSelf and promote and m.rankOrder > mine + 1,
+    demote = not m.isSelf and demote and m.rankOrder < maxRank and m.rankOrder > mine,
     remove = not m.isSelf and try(CanGuildRemove) and m.rankOrder > mine,
     publicNote = m.isSelf or try(CanEditPublicNote),
     viewOfficer = try(C_GuildInfo.CanViewOfficerNote),
@@ -90,28 +93,30 @@ function A.whisper(m)
   if tell then tell(m.full) end
 end
 function A.groupInvite(m) act("invite " .. m.name .. " to your group", C_PartyInfo and C_PartyInfo.InviteUnit or InviteUnit, m.full) end
-function A.setRank(m, order)
-  if order == m.rankOrder then return end
-  if not try(C_GuildInfo.IsGuildRankAssignmentAllowed, m.guid, order) then
-    say("that rank needs an authenticator on " .. m.name .. "'s account.") return
+local function rankName(order) return try(GuildControlGetRankName, order) or ("rank " .. order) end
+-- One step up or down (dir -1 = promote, +1 = demote). The roster update redraws the panel with the new rank.
+function A.step(m, dir)
+  local order = m.rankOrder + dir
+  if dir < 0 and m.guid and try(C_GuildInfo.IsGuildRankAssignmentAllowed, m.guid, order) == false then
+    say(rankName(order) .. " needs an authenticator on " .. m.name .. "'s account.") return
   end
-  act("change " .. m.name .. "'s rank", C_GuildInfo.SetGuildRankOrder, m.guid, order)
-end
-function A.note(m, public)
-  local label = public and "Public note" or "Officer note"
-  T.dialog({
-    title = label, text = m.name, accept = "Save",
-    input = { text = public and m.note or m.officerNote, maxLetters = NOTE_MAX },
-    onAccept = function(text) act("save the note", C_GuildInfo.SetNote, m.guid, text, public) end,
-  })
+  act((dir < 0 and "promote " or "demote ") .. m.name, dir < 0 and C_GuildInfo.Promote or C_GuildInfo.Demote, m.full)
+  C_Timer.After(0.5, function() try(C_GuildInfo.GuildRoster) end)
 end
 function A.remove(m)
   T.dialog({
     title = "Remove from guild", accept = "Remove",
     text = "Remove " .. m.name .. " from the guild?",
-    onAccept = function() act("remove " .. m.name, C_GuildInfo.RemoveFromGuild, m.guid) end,
+    onAccept = function() act("remove " .. m.name, C_GuildInfo.Uninvite, m.full) end,
   })
 end
+-- Blizzard's Guild Control: rank names and permissions, adding and removing ranks, guild bank tabs.
+function A.guildControl()
+  if GuildControlUI_Show then GuildControlUI_Show() return end
+  if UIParentLoadAddOn then try(UIParentLoadAddOn, "Blizzard_GuildControlUI") end
+  if GuildControlUI then ShowUIPanel(GuildControlUI) else say("Guild Control isn't available on this client.") end
+end
+function A.canGuildControl() return (try(IsGuildLeader) or try(CanGuildPromote)) and true or false end
 function A.leader(m)
   T.dialog({
     title = "Make guild leader", accept = "Make leader",
@@ -146,29 +151,9 @@ function A.disband()
     onAccept = function(text) if (text or ""):upper() == "DISBAND" then act("disband the guild", C_GuildInfo.Disband) end end,
   })
 end
-function A.editText(kind)
-  local motd = kind == "motd"
-  T.dialog({
-    title = motd and "Message of the day" or "Guild information", accept = "Save", width = 520,
-    input = { text = motd and (try(C_GuildInfo.GetMOTD) or "") or (try(C_GuildInfo.GetInfoText) or ""),
-      maxLetters = motd and MOTD_MAX or INFO_MAX, multiline = true, height = motd and 100 or 220 },
-    onAccept = function(text)
-      if motd then act("set the message of the day", C_GuildInfo.SetMOTD, text)
-      else act("save the guild information", C_GuildInfo.SetInfoText, text) end
-    end,
-  })
-end
 ns.guildActions = A
 
 -- ---------- right-click menu ----------
-
-local function rankMenu(parent, m, r)
-  for order = r.highest, r.lowest do
-    local radio = parent:CreateRadio(GuildControlGetRankName(order) or ("Rank " .. order),
-      function() return m.rankOrder == order end, function() A.setRank(m, order) end, order)
-    if not try(C_GuildInfo.IsGuildRankAssignmentAllowed, m.guid, order) then radio:SetEnabled(false) end
-  end
-end
 
 local function memberMenu(owner, m)
   if not (MenuUtil and MenuUtil.CreateContextMenu) then return end
@@ -183,9 +168,8 @@ local function memberMenu(owner, m)
     if ns.players()[m.name] then
       root:CreateButton("View profile", function() ns.selected = m.name; ns.showTab("Character") end)
     end
-    if r.rank then rankMenu(root:CreateButton("Set rank"), m, r) end
-    if r.publicNote then root:CreateButton("Edit public note", function() A.note(m, true) end) end
-    if r.officerNote then root:CreateButton("Edit officer note", function() A.note(m, false) end) end
+    if r.promote then root:CreateButton("Promote to " .. rankName(m.rankOrder - 1), function() A.step(m, -1) end) end
+    if r.demote then root:CreateButton("Demote to " .. rankName(m.rankOrder + 1), function() A.step(m, 1) end) end
     if r.leader then root:CreateButton("Make guild leader", function() A.leader(m) end) end
     if r.remove then root:CreateButton(color(T.HEX.danger, "Remove from guild"), function() A.remove(m) end) end
     if m.isSelf then root:CreateButton(color(T.HEX.danger, "Leave guild"), function() A.leave() end) end
@@ -238,20 +222,18 @@ local function buildPanel(parent)
   p.line2 = T.text(p, "muted"); p.line2:SetPoint("TOPLEFT", p.line1, "BOTTOMLEFT", 0, -3); p.line2:SetPoint("RIGHT", -14, 0)
   p.note = noteBox(p, "Public note")
   p.note:SetPoint("TOPLEFT", p.line2, "BOTTOMLEFT", 0, -11); p.note:SetPoint("RIGHT", -16, 0)
-  p.note:SetScript("OnClick", function() if R.member and rights(R.member).publicNote then A.note(R.member, true) end end)
+  ns.opensBlizzardGuild(p.note, "Edit notes", "The game only lets Blizzard's guild window change notes. This opens it: click the member there, then their note.")
   p.officer = noteBox(p, "Officer note")
   p.officer:SetPoint("TOPLEFT", p.note, "BOTTOMLEFT", 0, -8); p.officer:SetPoint("RIGHT", -16, 0)
-  p.officer:SetScript("OnClick", function() if R.member and rights(R.member).officerNote then A.note(R.member, false) end end)
+  ns.opensBlizzardGuild(p.officer, "Edit notes", "The game only lets Blizzard's guild window change notes. This opens it: click the member there, then their note.")
   p.altsLabel = T.text(p, "label"); p.altsLabel:SetText("ALSO PLAYS")
   p.alts = {}
   -- Buttons, two to a row from the bottom up, laid out by render.
   p.buttons = {
     whisper = T.button(p, "Whisper", 108, function() A.whisper(R.member) end),
     group = T.button(p, "Invite", 108, function() A.groupInvite(R.member) end, "tab"),
-    rank = T.button(p, "Rank  ▾", 108, function(self) if R.member then
-      local m, r = R.member, rights(R.member)
-      MenuUtil.CreateContextMenu(self, function(_, root) rankMenu(root, m, r) end)
-    end end, "tab"),
+    promote = T.button(p, "Promote", 108, function() if R.member then A.step(R.member, -1) end end, "tab"),
+    demote = T.button(p, "Demote", 108, function() if R.member then A.step(R.member, 1) end end, "tab"),
     profile = T.button(p, "Profile", 108, function() ns.selected = R.member.name; ns.showTab("Character") end, "tab"),
     leader = T.button(p, "Make leader", 108, function() A.leader(R.member) end, "tab"),
     remove = T.button(p, "Remove", 108, function() A.remove(R.member) end, "tab"),
@@ -280,10 +262,10 @@ local function renderPanel(p, m, others, info)
   local spec = info and info.spec ~= "" and (info.spec .. " ") or ""
   p.line1:SetText(spec .. safe(m.className or ""))
   p.line2:SetText((m.zone ~= "" and (safe(m.zone) .. "  ·  ") or "") .. lastOnlineText(m))
-  p.note.text:SetText(m.note ~= "" and safe(m.note) or (r.publicNote and color(T.HEX.dim, "Click to add a note") or color(T.HEX.dim, "—")))
+  p.note.text:SetText(m.note ~= "" and safe(m.note) or (r.publicNote and color(T.HEX.dim, "Add one in Blizzard's guild window") or color(T.HEX.dim, "—")))
   p.note:EnableMouse(r.publicNote and true or false)
   p.officer:SetShown(r.viewOfficer and true or false)
-  p.officer.text:SetText(m.officerNote ~= "" and safe(m.officerNote) or (r.officerNote and color(T.HEX.dim, "Click to add an officer note") or color(T.HEX.dim, "—")))
+  p.officer.text:SetText(m.officerNote ~= "" and safe(m.officerNote) or (r.officerNote and color(T.HEX.dim, "Add one in Blizzard's guild window") or color(T.HEX.dim, "—")))
   p.officer:EnableMouse(r.officerNote and true or false)
   -- Also plays
   local anchor = r.viewOfficer and p.officer or p.note
@@ -303,13 +285,15 @@ local function renderPanel(p, m, others, info)
     end
   end
   local show = {
-    whisper = not m.isSelf, group = not m.isSelf and m.online, rank = r.rank and true or false,
+    whisper = not m.isSelf, group = not m.isSelf and m.online, promote = r.promote and true or false, demote = r.demote and true or false,
     profile = ns.players()[m.name] ~= nil, leader = r.leader, remove = r.remove, leave = m.isSelf,
   }
   local order = {}
-  for _, key in ipairs({ "whisper", "group", "rank", "profile", "leader", "remove", "leave" }) do
+  for _, key in ipairs({ "whisper", "group", "promote", "demote", "profile", "leader", "remove", "leave" }) do
     if show[key] then order[#order + 1] = key else p.buttons[key]:Hide() end
   end
+  p.buttons.promote.label:SetText(r.promote and ("▲ " .. rankName(m.rankOrder - 1)):upper() or "PROMOTE")
+  p.buttons.demote.label:SetText(r.demote and ("▼ " .. rankName(m.rankOrder + 1)):upper() or "DEMOTE")
   local rows = math.ceil(#order / 2)
   for i, key in ipairs(order) do
     local b = p.buttons[key]
@@ -345,7 +329,7 @@ function ns.buildRoster(page)
   R.list.header:SetClipsChildren(true)
   R.panel = buildPanel(area)
 
-  R.search = T.searchBox(bar, 190, "Search the guild…", function(t) R.filter = t:lower(); ns.refreshUI() end)
+  R.search = T.searchBox(bar, 170, "Search the guild…", function(t) R.filter = t:lower(); ns.refreshUI() end)
   R.search:SetPoint("TOPLEFT", 2, 0)
   local function toggle(label, key)
     local check = CreateFrame("CheckButton", nil, bar, "UICheckButtonTemplate")
@@ -365,6 +349,9 @@ function ns.buildRoster(page)
   c2:SetPoint("LEFT", t1, "RIGHT", 12, 0); t2:SetPoint("LEFT", c2, "RIGHT", 2, 0)
   R.invite = T.button(bar, "+ Invite", 100, function() A.invite() end)
   R.invite:SetPoint("TOPRIGHT", -26, -1)
+  R.control = T.button(bar, "Guild Control", 118, function() A.guildControl() end, "tab")
+  R.blizzard = T.button(bar, "Blizzard UI", 100, function() end, "tab")
+  ns.opensBlizzardGuild(R.blizzard, "Blizzard's guild window", "For what only Blizzard's window can do here: notes, the message of the day and guild info.")
   page:SetScript("OnShow", function() try(C_GuildInfo.GuildRoster) end)
 end
 
@@ -499,7 +486,14 @@ function ns.renderRoster()
   local withAddon = 0
   for _, rec in pairs(ns.players()) do if type(rec) == "table" and rec.profile then withAddon = withAddon + 1 end end
   ns.setStats({ { #all, "members" }, { online, "online", "ok" }, { withAddon, "with the addon" } })
-  R.invite:SetShown(ns.newGuildWindow() and try(CanGuildInvite) and true or false)
+  -- Right end of the top bar, right to left: + Invite, Guild Control, Blizzard UI (only those that apply).
+  local on = ns.newGuildWindow()
+  local x = -26
+  for _, item in ipairs({ { R.invite, on and try(CanGuildInvite) }, { R.control, on and A.canGuildControl() }, { R.blizzard, on } }) do
+    local b, show = item[1], item[2] and true or false
+    b:SetShown(show)
+    if show then b:ClearAllPoints(); b:SetPoint("TOPRIGHT", x, -1); x = x - b:GetWidth() - 8 end
+  end
   if not ns.newGuildWindow() then selected = nil end
   R.holder:SetPoint("BOTTOMRIGHT", selected and -268 or 0, 0)
   R.list:SetRows(rows)
@@ -526,10 +520,14 @@ local function scrollText(parent, fontKey)
   return scroll
 end
 
-local function section(parent, title, onEdit)
+-- A heading, with an Edit button that opens Blizzard's guild window (the only place the game allows the edit).
+local function section(parent, title, editable)
   local h = T.text(parent, "heading"); h:SetText(title:upper())
-  local edit = onEdit and T.button(parent, "Edit", 64, onEdit, "tab") or nil
-  if edit then edit:SetHeight(20); edit:SetPoint("LEFT", h, "RIGHT", 10, 0) end
+  local edit = editable and T.button(parent, "Edit", 64, function() end, "tab") or nil
+  if edit then
+    edit:SetHeight(20); edit:SetPoint("LEFT", h, "RIGHT", 10, 0)
+    ns.opensBlizzardGuild(edit, "Edit " .. title:lower(), "The game only lets Blizzard's guild window change this. This opens it: the Guild Info tab.")
+  end
   return h, edit
 end
 
@@ -539,14 +537,14 @@ function ns.buildGuildInfo(page)
   local right = CreateFrame("Frame", nil, page)
   right:SetPoint("TOPLEFT", left, "TOPRIGHT", 24, 0); right:SetPoint("BOTTOMRIGHT", 0, 46)
 
-  local h1, e1 = section(left, "Message of the day", function() A.editText("motd") end)
+  local h1, e1 = section(left, "Message of the day", true)
   h1:SetPoint("TOPLEFT", 2, 0)
   G.motdEdit = e1
   local motdBox = CreateFrame("Frame", nil, left); T.panel(motdBox)
   motdBox:SetPoint("TOPLEFT", 0, -22); motdBox:SetPoint("RIGHT"); motdBox:SetHeight(90)
   G.motd = scrollText(motdBox); G.motd:SetPoint("TOPLEFT", 10, -8); G.motd:SetPoint("BOTTOMRIGHT", -28, 8)
 
-  local h2, e2 = section(left, "Guild information", function() A.editText("info") end)
+  local h2, e2 = section(left, "Guild information", true)
   h2:SetPoint("TOPLEFT", motdBox, "BOTTOMLEFT", 2, -18)
   G.infoEdit = e2
   local infoBox = CreateFrame("Frame", nil, left); T.panel(infoBox)
@@ -567,10 +565,12 @@ function ns.buildGuildInfo(page)
   sl:SetText("New guild window")
   local hint = T.text(page, "muted"); hint:SetPoint("LEFT", sl, "RIGHT", 8, 0)
   hint:SetText("(the guild key and button open this; Shift for Blizzard's)")
+  G.control = T.button(page, "Guild Control", 130, function() A.guildControl() end, "tab")
   G.disband = T.button(page, "Disband", 100, function() A.disband() end, "tab")
   G.disband:SetPoint("BOTTOMRIGHT", 0, 4)
   G.leave = T.button(page, "Leave guild", 120, function() A.leave() end, "tab")
   G.leave:SetPoint("RIGHT", G.disband, "LEFT", -10, 0)
+  G.control:SetPoint("RIGHT", G.leave, "LEFT", -10, 0)
   G.leave.label:SetTextColor(1, 0.54, 0.48); G.disband.label:SetTextColor(1, 0.54, 0.48)
   G.shown = false
   page:SetScript("OnShow", function() try(QueryGuildEventLog); try(C_GuildInfo.GuildRoster) end)
@@ -604,6 +604,10 @@ function ns.renderGuildInfo()
   G.log:SetText(#lines > 0 and table.concat(lines, "\n") or color(T.HEX.muted, "Nothing in the log yet."))
   G.switch:SetOn(ns.newGuildWindow())
   G.disband:SetShown(try(IsGuildLeader) and true or false)
+  G.control:SetShown(A.canGuildControl())
+  -- Leave / Guild Control shift right when Disband isn't there.
+  G.leave:ClearAllPoints()
+  if G.disband:IsShown() then G.leave:SetPoint("RIGHT", G.disband, "LEFT", -10, 0) else G.leave:SetPoint("BOTTOMRIGHT", 0, 4) end
 end
 
 -- Redraw when the guild changes.
