@@ -8,6 +8,16 @@
 - Notes, the message of the day and guild information open **Blizzard's guild window**, where the game allows the edit; the Perpetua window steps aside while it's open.
 - These need you out of combat (the game won't move its secure buttons in combat).
 
+### Lighter and faster
+- Guildmates' full profiles and recipes are now kept compressed and only unpacked when you open their Character page or the Crafters page; the lists use a small summary. About a quarter of the memory per guildmate (32 KB down to 8 KB in testing), which adds up in a big guild. Saved data from older versions is converted once at login.
+- Your own profile only re-reads what changed: a bag update checks attunement items, a talent change reads talents, and so on, instead of everything (talents and reputations were the slow parts). An unchanged profile isn't re-hashed or re-sent.
+- Reading reputations no longer leaves your collapsed reputation headers expanded.
+- Profession windows are read once things settle, and only fetch details for recipes it hasn't seen, instead of re-reading everything after every craft.
+- Hide Olympus only listens for nameplates, mouseover and target while it's switched on, and does less work per chat line.
+- The guild sync send loop only runs while there's something to send (it ticked five times a second all session).
+- Loot history older than 60 days and /rolls older than 14 days are dropped (the Perpetua app has uploaded them to the site).
+- Smaller allocations in hot helpers, so less garbage collection.
+
 ### New
 - **Guild Control** button (Guild page and Guild Info, for officers): Blizzard's window for rank names and permissions, adding and removing ranks, and guild bank tabs.
 - **Blizzard UI** button on the Guild page opens Blizzard's guild window.

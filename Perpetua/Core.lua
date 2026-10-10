@@ -36,7 +36,16 @@ local CHANGES = {
   PLAYER_EQUIPMENT_CHANGED = 15, PLAYER_LEVEL_UP = 5, TRAIT_CONFIG_UPDATED = 10,
   ACTIVE_PLAYER_SPECIALIZATION_CHANGED = 10, PLAYER_SPECIALIZATION_CHANGED = 10, CHARACTER_POINTS_CHANGED = 10,
   SKILL_LINES_CHANGED = 30, QUEST_TURNED_IN = 10, BAG_UPDATE_DELAYED = 60, UPDATE_FACTION = 120,
-  PLAYER_GUILD_UPDATE = 10,
+  PLAYER_GUILD_UPDATE = 10, UNIT_INVENTORY_CHANGED = 15,
+}
+-- Which parts of the profile each can change (Collect.lua reads only those again; stats are always read).
+local SECTIONS_FOR = {
+  PLAYER_EQUIPMENT_CHANGED = { "gear" }, UNIT_INVENTORY_CHANGED = { "gear" }, -- the second covers enchants
+  PLAYER_LEVEL_UP = { "character", "talents", "professions" },
+  TRAIT_CONFIG_UPDATED = { "talents" }, ACTIVE_PLAYER_SPECIALIZATION_CHANGED = { "talents" },
+  PLAYER_SPECIALIZATION_CHANGED = { "talents" }, CHARACTER_POINTS_CHANGED = { "talents" },
+  SKILL_LINES_CHANGED = { "professions" }, QUEST_TURNED_IN = { "attunements" }, BAG_UPDATE_DELAYED = { "attunements" },
+  UPDATE_FACTION = { "reputation" }, PLAYER_GUILD_UPDATE = { "character" },
 }
 
 local events = CreateFrame("Frame")
@@ -46,9 +55,12 @@ for _, e in ipairs({ "ADDON_LOADED", "PLAYER_LOGIN", "CHAT_MSG_ADDON", "CHAT_MSG
   "TRADE_SKILL_LIST_UPDATE", "TRADE_SKILL_DATA_SOURCE_CHANGED", "TRADE_SKILL_UPDATE", "CRAFT_SHOW", "CRAFT_UPDATE" }) do
   pcall(events.RegisterEvent, events, e) -- not every client has every event
 end
-for e in pairs(CHANGES) do pcall(events.RegisterEvent, events, e) end
+for e in pairs(CHANGES) do
+  if e == "UNIT_INVENTORY_CHANGED" then pcall(events.RegisterUnitEvent, events, e, "player")
+  else pcall(events.RegisterEvent, events, e) end
+end
 
-local started = false
+local started, scanTimer = false, nil
 events:SetScript("OnEvent", function(_, event, ...)
   if event == "CHAT_MSG_ADDON" then
     ns.onAddonMessage(...)
@@ -63,11 +75,13 @@ events:SetScript("OnEvent", function(_, event, ...)
     end
   elseif event == "PLAYER_LOGIN" then
     if not started then started = true; start() end
-  elseif event == "CRAFT_SHOW" or event == "CRAFT_UPDATE" then
-    pcall(ns.scanCraft)
-  elseif event:find("^TRADE_SKILL") then
-    pcall(ns.scanTradeSkill)
+  elseif event == "CRAFT_SHOW" or event == "CRAFT_UPDATE" or event:find("^TRADE_SKILL") then
+    -- These come in bursts (every craft, every filter change): read the window once things settle.
+    local craft = event:find("^CRAFT") ~= nil
+    if scanTimer then scanTimer:Cancel() end
+    scanTimer = C_Timer.NewTimer(1, function() scanTimer = nil; pcall(craft and ns.scanCraft or ns.scanTradeSkill) end)
   elseif CHANGES[event] and started then
+    for _, section in ipairs(SECTIONS_FOR[event] or {}) do ns.markDirty(section) end
     ns.scheduleRefresh(CHANGES[event])
     -- Joining or leaving the guild locks or unlocks the window.
     if event == "PLAYER_GUILD_UPDATE" then ns.fire() end

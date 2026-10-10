@@ -132,6 +132,7 @@ end
 
 -- Average item level of equipped gear (shirt and tabard left out).
 function ns.avgItemLevel(profile)
+  if profile and profile.il then return profile.il end -- a guildmate's summary carries it
   local total, n = 0, 0
   for _, g in ipairs(profile and profile.gear or {}) do
     if g.il and g.s ~= 4 and g.s ~= 19 then total = total + g.il; n = n + 1 end

@@ -407,7 +407,7 @@ local function renderCharacter()
   C:Reset()
   local name = ns.selected or ns.selfName
   local rec = name and ns.players()[name]
-  local p = rec and ns.merge(rec.profile, rec.recipes)
+  local p = rec and ns.fullProfile(rec)
   if not p then
     if rec then
       local old = rec.addon and ns.newer(ns.VERSION, rec.addon)
@@ -541,22 +541,29 @@ local function buildCrafters(page)
   crafters.list = List(area, { { "Recipe", 300 }, { "Profession", 120 }, { "Who can make it", 280 } })
 end
 
-local function renderCrafters()
-  -- recipe name -> { prof, item, spell, people }
+-- recipe name -> { prof, item, spell, people }, built from everyone's (packed) recipes when the page is shown and
+-- rebuilt only when someone's recipes change; let go when the window closes (crafters.index = nil in OnHide).
+local function craftersIndex()
+  if crafters.index and crafters.indexAt == (ns.recipesChanged or 0) then return crafters.index, crafters.count end
   local index, count = {}, 0
   for name, rec in pairs(ns.players()) do
-    if type(rec) == "table" and type(rec.recipes) == "table" then
-      for prof, saved in pairs(rec.recipes) do
-        for _, r in ipairs(type(saved) == "table" and saved.list or {}) do
-          if r.n then
-            local e = index[r.n]
-            if not e then e = { prof = prof, item = r.it, spell = r.id, people = {} }; index[r.n] = e; count = count + 1 end
-            e.people[#e.people + 1] = name
-          end
+    local recipes = ns.recipesOf(rec)
+    for prof, saved in pairs(type(recipes) == "table" and recipes or {}) do
+      for _, r in ipairs(type(saved) == "table" and saved.list or {}) do
+        if r.n then
+          local e = index[r.n]
+          if not e then e = { prof = prof, item = r.it, spell = r.id, people = {} }; index[r.n] = e; count = count + 1 end
+          e.people[#e.people + 1] = name
         end
       end
     end
   end
+  crafters.index, crafters.count, crafters.indexAt = index, count, ns.recipesChanged or 0
+  return index, count
+end
+
+local function renderCrafters()
+  local index, count = craftersIndex()
   local rows, shown = {}, 0
   for recipe, e in pairs(index) do
     if crafters.filter == "" or recipe:lower():find(crafters.filter, 1, true) then
@@ -1526,6 +1533,8 @@ local TOP, SIDE = 62, 196 -- top bar height, sidebar width
 
 local function build()
   main = CreateFrame("Frame", "PerpetuaFrame", UIParent)
+  -- Closed: let go of what only the open window needed.
+  main:SetScript("OnHide", function() crafters.index = nil end)
   main:SetSize(1020, 640)
   main:SetPoint("CENTER")
   main:SetFrameStrata("HIGH")

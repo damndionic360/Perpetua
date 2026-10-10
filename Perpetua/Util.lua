@@ -20,10 +20,11 @@ function ns.text(v)
 end
 
 -- Calls fn and returns its results, or nothing if it doesn't exist or errors.
+-- (Hands pcall's results straight through: no table per call. It runs a lot, e.g. several times per guild member.)
+local function passOk(ok, ...) if ok then return ... end end
 function ns.try(fn, ...)
   if type(fn) ~= "function" then return end
-  local r = { pcall(fn, ...) }
-  if r[1] then return unpack(r, 2, table.maxn(r)) end
+  return passOk(pcall(fn, ...))
 end
 
 -- WoW: Forever characters have a first name and a surname. The client hands the surname over where Classic

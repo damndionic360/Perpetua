@@ -70,6 +70,8 @@ local function accountAlts(me, guild)
   return out
 end
 
+local last = {} -- this session's last profile text and recipes change count, to skip unchanged work
+
 -- Re-reads this character and, if anything changed, tells the guild.
 function ns.refreshSelf(quiet)
   if ns.locked() then return end
@@ -99,16 +101,26 @@ function ns.refreshSelf(quiet)
   local me = players[name] or {}
   players[name] = me
   local changed = false
-  local pv = ns.hash(ns.toJson(profile))
-  if me.pv ~= pv then
-    me.profile, me.pv, me.pt = profile, pv, ns.now()
-    changed = true
+  -- Same text as last time (the encoder sorts keys): nothing changed, no need to hash it. Lua compares equal
+  -- strings in constant time.
+  local json = ns.toJson(profile)
+  if json ~= last.json or last.name ~= name then
+    last.json, last.name = json, name
+    local pv = ns.hash(json)
+    if me.pv ~= pv then
+      me.profile, me.pv, me.pt = profile, pv, ns.now()
+      changed = true
+    end
   end
-  local recipes = recipesForHash()
-  local rv = next(recipes) and ns.hash(ns.toJson(recipes)) or nil
-  if rv and me.rv ~= rv then
-    me.recipes, me.rv, me.rt = PerpetuaCharDB.recipes, rv, ns.now()
-    changed = true
+  -- Recipes only change when a profession window was read (ns.onRecipesChanged).
+  if last.recipes ~= (ns.recipesChanged or 0) or last.recipesFor ~= name then
+    last.recipes, last.recipesFor = ns.recipesChanged or 0, name
+    local recipes = recipesForHash()
+    local rv = next(recipes) and ns.hash(ns.toJson(recipes)) or nil
+    if rv and me.rv ~= rv then
+      me.recipes, me.rv, me.rt = PerpetuaCharDB.recipes, rv, ns.now()
+      changed = true
+    end
   end
   me.heard, me.self, me.class, me.level, me.addon = ns.now(), true, profile.char.classFile, profile.char.level, ns.VERSION
   if changed and not quiet then ns.announce() end
@@ -120,20 +132,27 @@ function ns.scheduleRefresh(delay)
   if refreshTimer then refreshTimer:Cancel() end
   refreshTimer = C_Timer.NewTimer(delay or 15, function() refreshTimer = nil; ns.refreshSelf() end)
 end
-ns.onRecipesChanged = function() ns.scheduleRefresh(5) end
+ns.onRecipesChanged = function() ns.recipesChanged = (ns.recipesChanged or 0) + 1; ns.scheduleRefresh(5) end
 
 -- ---------- sending ----------
 
 local queue, avail, lastPump = {}, BURST, 0
 local lastAnnounce = 0
 
+local pumpTicker, pump
+-- The send loop runs only while there's something queued (it used to tick five times a second all session).
 local function enqueue(msg)
   queue[#queue + 1] = { msg = msg, tries = 0 }
+  if not pumpTicker then pumpTicker = C_Timer.NewTicker(0.2, function() pump() end) end
 end
 
 local THROTTLED = { [3] = true, [8] = true } -- Enum.SendAddonMessageResult AddonMessageThrottle / ChannelThrottle
 
-local function pump()
+function pump()
+  if not queue[1] then
+    if pumpTicker then pumpTicker:Cancel(); pumpTicker = nil end
+    return
+  end
   local now = GetTime()
   avail = math.min(BURST, avail + CPS * (now - lastPump))
   lastPump = now
@@ -248,7 +267,8 @@ local function accept(from, part, version, s)
     if ns.fullName(c.name, type(c.surname) == "string" and c.surname or nil):lower() ~= from:lower() then return end
     local rec = players[from] or {}
     players[from] = rec
-    rec.profile, rec.pv, rec.pt = data, version, tonumber(data.t)
+    -- Kept compact: the summary the lists read, and the packed string for when their page is opened.
+    rec.profile, rec.pz, rec.pv, rec.pt = ns.summarize(data), s, version, tonumber(data.t)
     rec.class, rec.level = c.classFile, tonumber(c.level)
   elseif part == "C" then
     if ns.isOfficer(from) then ns.adoptCalendar(data) end
@@ -260,7 +280,8 @@ local function accept(from, part, version, s)
     if type(data.r) ~= "table" then return end
     local rec = players[from] or {}
     players[from] = rec
-    rec.recipes, rec.rv, rec.rt = data.r, version, tonumber(data.t)
+    rec.rz, rec.recipes, rec.rv, rec.rt = s, nil, version, tonumber(data.t)
+    ns.recipesChanged = (ns.recipesChanged or 0) + 1
   else
     return
   end
@@ -358,8 +379,8 @@ end
 
 function ns.startComm()
   tidy()
+  pcall(ns.compactPlayers)
   ns.try(C_ChatInfo.RegisterAddonMessagePrefix, PREFIX)
-  C_Timer.NewTicker(0.2, pump)
   -- Re-announce every 10 minutes so anyone who missed a change catches up; drop stalled transfers.
   C_Timer.NewTicker(600, function() ns.announce() end)
   C_Timer.NewTicker(60, function()

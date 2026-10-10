@@ -5,6 +5,9 @@
 local _, ns = ...
 local MIN_QUALITY = 4 -- epic
 local KEEP_LOOT, KEEP_ROLLS = 1500, 3000
+-- Rolls only matter in the couple of minutes before a drop, and the Perpetua app uploads both to the site, so old
+-- ones are dropped (once a session) instead of filling everyone's saved variables.
+local LOOT_DAYS, ROLL_DAYS = 60, 14
 
 -- Blizzard's message formats ("%s receives loot: %s.") as Lua patterns with captures.
 local function pattern(fmt)
@@ -20,10 +23,21 @@ local LOOT_SELF = { pattern(LOOT_ITEM_SELF_MULTIPLE), pattern(LOOT_ITEM_SELF), p
 local ROLL = pattern(RANDOM_ROLL_RESULT)
 local QUALITY_BY_COLOR = { ["9d9d9d"] = 0, ffffff = 1, ["1eff00"] = 2, ["0070dd"] = 3, a335ee = 4, ff8000 = 5, e6cc80 = 6 }
 
+local pruned = {}
+local function prune(list, days)
+  local cutoff, keep = ns.now() - days * 86400, {}
+  for _, e in ipairs(list) do if (e.t or 0) >= cutoff then keep[#keep + 1] = e end end
+  return keep
+end
+
 local function store()
   local g = PerpetuaDB.guilds and PerpetuaDB.guilds[ns.guildName() or "No guild"]
   if not g then ns.players(); g = PerpetuaDB.guilds[ns.guildName() or "No guild"] end
   g.loot, g.rolls = g.loot or {}, g.rolls or {}
+  if not pruned[g] then
+    pruned[g] = true
+    g.loot, g.rolls = prune(g.loot, LOOT_DAYS), prune(g.rolls, ROLL_DAYS)
+  end
   return g
 end
 
@@ -47,9 +61,12 @@ local function nameMap()
   return map
 end
 
+-- Rolls come in bursts: the map is reused for a few seconds rather than rebuilt for every one.
+local map, mapAt = nil, 0
 local function resolve(name)
   if not name then return nil end
-  return nameMap()[name] or ns.playerKey(name)
+  if not map or GetTime() - mapAt > 5 then map, mapAt = nameMap(), GetTime() end
+  return map[name] or ns.playerKey(name)
 end
 
 -- Adds an entry unless it's already there (another raider reported the same thing a moment apart).

@@ -155,7 +155,14 @@ local function collectReputation(d)
   d.rep = {}
   local R = C_Reputation
   if R and R.GetNumFactions and R.GetFactionDataByIndex then
-    try(R.ExpandAllFactionHeaders)
+    -- Collapsed headers hide their factions from the list, so open them all to read it, then close again the ones
+    -- the player had closed (bottom up, so the indexes don't shift under us).
+    local closed = {}
+    for i = 1, (try(R.GetNumFactions) or 0) do
+      local f = try(R.GetFactionDataByIndex, i)
+      if f and f.isHeader and f.isCollapsed and f.factionID then closed[f.factionID] = true end
+    end
+    if next(closed) then try(R.ExpandAllFactionHeaders) end
     for i = 1, (try(R.GetNumFactions) or 0) do
       local f = try(R.GetFactionDataByIndex, i)
       if f and (not f.isHeader or f.isHeaderWithRep) then
@@ -164,6 +171,12 @@ local function collectReputation(d)
           id = num(f.factionID), n = text(f.name), s = num(f.reaction),
           v = cur and low and cur - low or nil, m = high and low and high - low or nil,
         }
+      end
+    end
+    if next(closed) and R.CollapseFactionHeader then
+      for i = (try(R.GetNumFactions) or 0), 1, -1 do
+        local f = try(R.GetFactionDataByIndex, i)
+        if f and f.isHeader and not f.isCollapsed and closed[f.factionID] then try(R.CollapseFactionHeader, i) end
       end
     end
   elseif GetNumFactions then
@@ -223,11 +236,23 @@ function ns.nameSpecFromTrees(d, columns)
   d.spec.role = ns.treeRole(names[best])
 end
 
+-- Each section, and the profile fields it fills. Stats change all the time (buffs) and are cheap, so they're always
+-- read; the rest are read again only when an event says they may have changed (ns.markDirty, from Core.lua), and
+-- otherwise reused from the last read. Talents (hundreds of nodes) and reputations were the expensive ones.
 local SECTIONS = {
-  { "character", collectCharacter }, { "talents", collectSpecAndTalents }, { "gear", collectGear },
-  { "professions", collectProfessions }, { "attunements", collectAttunements },
-  { "reputation", collectReputation }, { "stats", collectStats },
+  { "character", collectCharacter, { "char" } },
+  { "talents", collectSpecAndTalents, { "spec", "talents" } },
+  { "gear", collectGear, { "gear" } },
+  { "professions", collectProfessions, { "profs" } },
+  { "attunements", collectAttunements, { "quests", "items" } },
+  { "reputation", collectReputation, { "rep" } },
+  { "stats", collectStats, { "stats", "powerType", "res", "pvp" }, always = true },
 }
+
+local cached, dirty = {}, nil -- dirty = nil: everything
+function ns.markDirty(section)
+  if dirty then dirty[section] = true end
+end
 
 -- This character's profile, without recipes and without a time stamp (so it can be hashed).
 function ns.collectProfile()
@@ -235,9 +260,24 @@ function ns.collectProfile()
   local d = { v = 1, addon = ns.VERSION, build = build and (build .. " (" .. tostring(toc) .. ")") }
   local errors = {}
   for _, s in ipairs(SECTIONS) do
-    local ok, err = pcall(s[2], d)
-    if not ok then errors[#errors + 1] = s[1] .. ": " .. tostring(err):sub(1, 200) end
+    local name, fn, fields = s[1], s[2], s[3]
+    local c = cached[name]
+    if s.always or not dirty or dirty[name] or not c then
+      local ok, err = pcall(fn, d)
+      if ok then
+        c = {}
+        for _, f in ipairs(fields) do c[f] = d[f] end
+        cached[name] = c
+      else
+        errors[#errors + 1] = name .. ": " .. tostring(err):sub(1, 200)
+        cached[name] = nil -- try again next time
+      end
+    else
+      for _, f in ipairs(fields) do d[f] = c[f] end
+    end
   end
+  -- The talents section names the spec from the trees and needs the class; it's re-run when the character is.
+  dirty = {}
   if #errors > 0 then d.errors = errors end
   return d
 end
@@ -267,14 +307,94 @@ function ns.merge(profile, recipes)
   return d
 end
 
+-- ---------- guildmates' data, kept small ----------
+-- A guildmate's full profile (gear, talents, stats, reputations) and recipes are only needed when someone opens
+-- their Character page or the Crafters page, so they're kept as the compressed strings guild sync delivered
+-- (rec.pz, rec.rz: "PERP1Z:..." from ns.pack) and rec.profile holds just this summary, which the lists read.
+-- Your own characters keep full tables: they're what you send.
+local SUMMARY_CHAR = { "name", "surname", "class", "classFile", "level", "race", "raceFile", "faction", "guild", "guildRank" }
+function ns.summarize(p)
+  local c, out = p.char or {}, {}
+  for _, k in ipairs(SUMMARY_CHAR) do out[k] = c[k] end
+  local profs = {}
+  for _, x in ipairs(p.profs or {}) do profs[#profs + 1] = { n = x.n, r = x.r, m = x.m, p = x.p } end
+  return {
+    v = p.v, addon = p.addon, t = p.t, char = out, spec = p.spec, profs = profs, quests = p.quests, items = p.items,
+    alts = p.alts, signups = p.signups, il = ns.avgItemLevel(p), summary = true,
+  }
+end
+
+-- The whole profile + recipes for a player, merged (the Character page). The last one unpacked is kept, so
+-- redraws don't unpack it again.
+local lastFull = {}
+function ns.fullProfile(rec)
+  if type(rec) ~= "table" then return nil end
+  if not rec.pz then return ns.merge(rec.profile, rec.recipes) end
+  if lastFull.pz ~= rec.pz or lastFull.rz ~= rec.rz then
+    local p = ns.unpack(rec.pz, 600000)
+    local r = rec.rz and ns.unpack(rec.rz, 600000)
+    lastFull = { pz = rec.pz, rz = rec.rz, data = type(p) == "table" and ns.merge(p, type(r) == "table" and r.r or rec.recipes) or nil }
+  end
+  return lastFull.data
+end
+
+-- A player's recipes ({ [profession] = { list, t, r, m } }), unpacked if need be. Not kept: the Crafters page
+-- builds its index from these and holds that instead.
+function ns.recipesOf(rec)
+  if type(rec) ~= "table" then return nil end
+  if rec.recipes then return rec.recipes end
+  local r = rec.rz and ns.unpack(rec.rz, 600000)
+  return type(r) == "table" and type(r.r) == "table" and r.r or nil
+end
+
+-- Saved data from before 2.13 kept every guildmate's full tables; turn those into the compact form once.
+function ns.compactPlayers()
+  for _, g in pairs(PerpetuaDB.guilds or {}) do
+    for _, rec in pairs(g.players or {}) do
+      if type(rec) == "table" and not rec.self then
+        local p = rec.profile
+        if type(p) == "table" and not p.summary then
+          local full = {}
+          for k, v in pairs(p) do full[k] = v end
+          full.t = full.t or rec.pt
+          rec.pz = ns.pack(full)
+          rec.profile = ns.summarize(full)
+        end
+        if type(rec.recipes) == "table" then
+          rec.rz = ns.pack({ t = rec.rt, r = rec.recipes })
+          rec.recipes = nil
+        end
+      end
+    end
+  end
+end
+
 -- ---------- recipes (profession windows) ----------
+
+local function sameList(a, b)
+  if not (a and b) or #a ~= #b then return false end
+  for i = 1, #a do if a[i].id ~= b[i].id or a[i].n ~= b[i].n then return false end end
+  return true
+end
 
 local function saveRecipes(name, list, rank, max)
   name = text(name)
   if not name or #list == 0 then return end
   PerpetuaCharDB.recipes = PerpetuaCharDB.recipes or {}
+  local old = PerpetuaCharDB.recipes[name]
+  -- Nothing new learned and the same skill: leave it (crafting fires these events after every craft). The time
+  -- stamp still moves on once a day, so the site sees the list is current.
+  if old and old.r == num(rank) and old.m == num(max) and sameList(old.list, list) and ns.now() - (old.t or 0) < 86400 then return end
   PerpetuaCharDB.recipes[name] = { list = list, t = ns.now(), r = num(rank), m = num(max) }
   if ns.onRecipesChanged then ns.onRecipesChanged() end
+end
+
+-- The output item of each recipe already read, so a rescan doesn't fetch every schematic again.
+local function knownOutputs(name)
+  local out = {}
+  local old = PerpetuaCharDB.recipes and name and PerpetuaCharDB.recipes[name]
+  for _, r in ipairs(old and old.list or {}) do if r.id then out[r.id] = r.it or false end end
+  return out
 end
 
 function ns.scanTradeSkill()
@@ -288,12 +408,16 @@ function ns.scanTradeSkill()
       local _
       _, name, rank, max = try(T.GetTradeSkillLine)
     end
-    local list = {}
+    local list, known = {}, knownOutputs(text(name))
     for _, id in ipairs(try(T.GetAllRecipeIDs) or {}) do
       local r = try(T.GetRecipeInfo, id)
       if r and r.learned then
-        local schematic = try(T.GetRecipeSchematic, id, false)
-        list[#list + 1] = { id = id, n = text(r.name), it = schematic and num(schematic.outputItemID) or itemIdFrom(text(try(T.GetRecipeItemLink, id))) }
+        local it = known[id]
+        if it == nil then
+          local schematic = try(T.GetRecipeSchematic, id, false)
+          it = schematic and num(schematic.outputItemID) or itemIdFrom(text(try(T.GetRecipeItemLink, id))) or false
+        end
+        list[#list + 1] = { id = id, n = text(r.name), it = it or nil }
       end
     end
     return saveRecipes(name, list, rank, max)

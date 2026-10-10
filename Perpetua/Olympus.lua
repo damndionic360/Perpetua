@@ -42,13 +42,18 @@ local function parse(v)
   return tonumber(t), id ~= "" and id or nil
 end
 
+-- Called for every chat line (once per chat window), so the defaults are filled in once, not each time.
+local readyDb
 function O.db()
-  PerpetuaDB.olympus = PerpetuaDB.olympus or {}
   local db = PerpetuaDB.olympus
+  if db and db == readyDb then return db end
+  PerpetuaDB.olympus = db or {}
+  db = PerpetuaDB.olympus
   db.opts = db.opts or {}
   db.known = db.known or {}
   db.totals = db.totals or {}
   for _, o in ipairs(O.OPTIONS) do if db.opts[o.key] == nil then db.opts[o.key] = true end end
+  readyDb = db
   return db
 end
 
@@ -93,12 +98,16 @@ local function remember(name, guid, guild)
   local known = O.db().known
   local _, oldId = parse(known[name])
   guid = guid or oldId
+  local seen = parse(known[name])
   if known[name] == nil then
     if knownN >= MAX_KNOWN then makeRoom(known) end
     knownN = knownN + 1
     O.session.learned = O.session.learned + 1
   end
-  known[name] = ns.now() .. (guid and (" " .. guid) or "")
+  -- Seen again soon after: the saved entry is good enough (no new string for every nameplate in a city).
+  if not (seen and ns.now() - seen < 6 * 3600 and (guid == oldId)) then
+    known[name] = ns.now() .. (guid and (" " .. guid) or "")
+  end
   if guid then byGuid[guid] = name end
   if guild then guildOf[name] = guild end
 end
@@ -141,13 +150,14 @@ function O.match(name, guid)
 end
 
 -- For invites and duels, which come with only a name: also look at the players on screen right now.
+local ON_SCREEN = { "target", "mouseover", "focus" }
+for i = 1, 40 do ON_SCREEN[#ON_SCREEN + 1] = "nameplate" .. i end
+
 local function matchNow(name, guid)
   if O.match(name, guid) then return true end
   local key = ns.playerKey(ns.text(name))
   if not key then return false end
-  local units = { "target", "mouseover", "focus" }
-  for i = 1, 40 do units[#units + 1] = "nameplate" .. i end
-  for _, unit in ipairs(units) do
+  for _, unit in ipairs(ON_SCREEN) do
     if try(UnitIsPlayer, unit) and unitName(unit) == key then
       learnUnit(unit)
       return O.isOlympus(try(GetGuildInfo, unit))
@@ -323,9 +333,18 @@ function O.onEvent(event, ...)
 end
 
 local events = CreateFrame("Frame")
-for _, e in ipairs({ "PLAYER_LOGIN", "NAME_PLATE_UNIT_ADDED", "UPDATE_MOUSEOVER_UNIT", "PLAYER_TARGET_CHANGED", "PLAYER_FOCUS_CHANGED",
-  "GROUP_ROSTER_UPDATE", "WHO_LIST_UPDATE", "GUILD_INVITE_REQUEST", "PETITION_SHOW", "PARTY_INVITE_REQUEST", "TRADE_SHOW", "DUEL_REQUESTED" }) do
+-- Always: login, guild changes, and the rare invites, trades and duels.
+for _, e in ipairs({ "PLAYER_LOGIN", "PLAYER_GUILD_UPDATE", "GUILD_INVITE_REQUEST", "PETITION_SHOW", "PARTY_INVITE_REQUEST", "TRADE_SHOW", "DUEL_REQUESTED" }) do
   pcall(events.RegisterEvent, events, e) -- not every client has every event
+end
+-- Only while Hide Olympus is on: the frequent ones it learns guilds from (nameplates fire constantly in cities).
+local LEARN = { "NAME_PLATE_UNIT_ADDED", "UPDATE_MOUSEOVER_UNIT", "PLAYER_TARGET_CHANGED", "PLAYER_FOCUS_CHANGED", "GROUP_ROSTER_UPDATE", "WHO_LIST_UPDATE" }
+local learning
+function O.syncEvents()
+  local on = O.active() and true or false
+  if on == learning then return end
+  learning = on
+  for _, e in ipairs(LEARN) do pcall(on and events.RegisterEvent or events.UnregisterEvent, events, e) end
 end
 events:SetScript("OnEvent", function(_, event, ...)
   if event == "PLAYER_LOGIN" then
@@ -345,8 +364,12 @@ events:SetScript("OnEvent", function(_, event, ...)
       end
     end
     if knownN > MAX_KNOWN then makeRoom(known) end
+    O.syncEvents()
+    -- The guild name arrives a little after login (until then the addon counts as locked).
+    C_Timer.After(10, O.syncEvents)
     return
   end
+  if event == "PLAYER_GUILD_UPDATE" then O.syncEvents() return end
   local ok, err = pcall(O.onEvent, event, ...)
   if not ok and ns.debug then print("Perpetua Olympus:", err) end
 end)
@@ -355,12 +378,14 @@ end)
 
 function O.set(on)
   O.db().on = on and true or false
+  O.syncEvents()
   print("|cffd4af37Perpetua|r: Hide Olympus is " .. (on and "|cff8fd18aon|r" or "off") .. ".")
   ns.refreshUI(true)
 end
 
 function O.setOption(key, on)
   O.db().opts[key] = on and true or false
+  O.syncEvents()
   ns.refreshUI(true)
 end
 
