@@ -612,10 +612,165 @@ local function myRole()
   return ns.classRoles(myClass())[1]
 end
 
+-- ---------- New raid (officers) ----------
+-- The form behind the Calendar tab's "New raid" button. Times are this computer's local time, like the rest of
+-- the tab; the raid goes to the site with guild sync (Calendar.lua ns.createRaid).
+
+local newRaid
+local function stepper(parent, width, onStep)
+  local holder = CreateFrame("Frame", nil, parent)
+  holder:SetSize(width, 26)
+  local prev = T.button(holder, "<", 26, function() onStep(-1) end, "tab")
+  prev:SetPoint("LEFT")
+  local nextB = T.button(holder, ">", 26, function() onStep(1) end, "tab")
+  nextB:SetPoint("RIGHT")
+  holder.value = T.text(holder, "body", "CENTER")
+  holder.value:SetPoint("LEFT", prev, "RIGHT", 6, 0); holder.value:SetPoint("RIGHT", nextB, "LEFT", -6, 0)
+  return holder
+end
+
+local function showNewRaid()
+  if not newRaid then
+    local f = CreateFrame("Frame", "PerpetuaNewRaid", UIParent)
+    f:SetSize(460, 452)
+    f:SetFrameStrata("DIALOG")
+    f:SetToplevel(true)
+    f:EnableMouse(true)
+    f:SetMovable(true)
+    f:RegisterForDrag("LeftButton")
+    f:SetScript("OnDragStart", f.StartMoving)
+    f:SetScript("OnDragStop", f.StopMovingOrSizing)
+    f:SetClampedToScreen(true)
+    T.window(f)
+    tinsert(UISpecialFrames, "PerpetuaNewRaid")
+    local title = T.text(f, "heading")
+    title:SetPoint("TOPLEFT", 22, -20)
+    title:SetText("NEW RAID")
+    local close = T.closeButton(f, function() f:Hide() end)
+    close:SetPoint("TOPRIGHT", -12, -12)
+
+    local y = -54
+    local function row(label, height)
+      local l = T.text(f, "label")
+      l:SetPoint("TOPLEFT", 22, y - 7)
+      l:SetText(label:upper())
+      local at = y
+      y = y - (height or 26) - 10
+      return at
+    end
+    local W = 290
+    local function place(widget, at) widget:SetPoint("TOPLEFT", 148, at) end
+
+    f.raid = stepper(f, W, function(d)
+      f.ri = (f.ri - 1 + d) % #ns.RAIDS + 1
+      local r = ns.RAIDS[f.ri]
+      f.size:SetText(tostring(r[2]))
+      if not f.titleTouched then f.title:SetText(r[1]) end
+      f:Update()
+    end)
+    place(f.raid, row("Raid"))
+    f.title = T.searchBox(f, W, "Title", function() end)
+    f.title:SetMaxLetters(80)
+    f.title:HookScript("OnTextChanged", function(_, user) if user then f.titleTouched = true end end)
+    place(f.title, row("Title"))
+    f.day = stepper(f, W, function(d) f.dayOffset = math.max(0, math.min(60, f.dayOffset + d)); f:Update() end)
+    place(f.day, row("Day"))
+    f.time = T.searchBox(f, 90, "20:00", function() f:Update() end)
+    f.time:SetMaxLetters(5)
+    place(f.time, row("Starts (your time)"))
+    f.hours = T.searchBox(f, 90, "3", function() end)
+    f.hours:SetMaxLetters(4)
+    place(f.hours, row("Hours"))
+    f.size = T.searchBox(f, 90, "40", function() end)
+    f.size:SetMaxLetters(2)
+    f.size:SetNumeric(true)
+    place(f.size, row("Players"))
+    f.weeks = stepper(f, W, function(d) f.w = math.max(1, math.min(12, f.w + d)); f:Update() end)
+    place(f.weeks, row("Repeat"))
+    f.notes = T.searchBox(f, W, "Notes (optional)", function() end)
+    f.notes:SetMaxLetters(300)
+    place(f.notes, row("Notes"))
+    f.hint = T.text(f, "muted")
+    f.hint:SetPoint("TOPLEFT", 22, y - 2); f.hint:SetPoint("RIGHT", -22, 0)
+    f.hint:SetWordWrap(true); f.hint:SetJustifyH("LEFT")
+
+    -- The start as UTC seconds, or nil and why not.
+    function f:Start()
+      local h, m = (self.time:GetText() or ""):match("^%s*(%d%d?):?(%d%d)%s*$")
+      if (self.time:GetText() or "") == "" then h, m = "20", "00" end
+      h, m = tonumber(h), tonumber(m)
+      if not (h and m and h < 24 and m < 60) then return nil, "Time as HH:MM, 24-hour (e.g. 19:30)." end
+      local d = date("*t", time() + self.dayOffset * 86400)
+      return time({ year = d.year, month = d.month, day = d.day, hour = h, min = m, sec = 0 })
+    end
+    function f:Update()
+      self.raid.value:SetText(ns.RAIDS[self.ri][1])
+      self.day.value:SetText(date("%a %b %d", time() + self.dayOffset * 86400) .. (self.dayOffset == 0 and "  (today)" or ""))
+      self.weeks.value:SetText(self.w == 1 and "Just once" or ("Weekly, " .. self.w .. " weeks"))
+      local t, why = self:Start()
+      self.hint:SetText(why or ("The raid goes to " .. ns.SITE .. " with the next guild sync, then to Discord and everyone's addon. "
+        .. "Create & sync reloads your UI so it leaves now."))
+    end
+    local function create(reload)
+      local t, why = f:Start()
+      if not t then f.hint:SetText(color("e06666", why)) return end
+      local r = ns.RAIDS[f.ri]
+      local hours = tonumber((f.hours:GetText() or ""):gsub(",", ".")) or 3
+      local ok, err = ns.createRaid({
+        instance = r[1], title = (f.title:GetText() or "") ~= "" and f.title:GetText() or r[1], t = t,
+        dur = math.floor(math.max(0.25, math.min(12, hours)) * 60 + 0.5), size = tonumber(f.size:GetText()) or r[2],
+        notes = f.notes:GetText() or "", w = f.w,
+      })
+      if not ok then f.hint:SetText(color("e06666", err)) return end
+      f:Hide()
+      ns.refreshUI(true)
+      if reload then ReloadUI() end
+    end
+    f.cancel = T.button(f, "Cancel", 100, function() f:Hide() end, "tab")
+    f.cancel:SetPoint("BOTTOMRIGHT", -22, 18)
+    f.sync = T.button(f, "Create & sync", 150, function() create(true) end)
+    f.sync:SetPoint("RIGHT", f.cancel, "LEFT", -10, 0)
+    f.ok = T.button(f, "Create", 100, function() create(false) end, "tab")
+    f.ok:SetPoint("RIGHT", f.sync, "LEFT", -10, 0)
+    newRaid = f
+  end
+  local f = newRaid
+  f.ri, f.dayOffset, f.w, f.titleTouched = 1, 1, 1, false
+  f.title:SetText(ns.RAIDS[1][1])
+  f.time:SetText("20:00"); f.hours:SetText("3"); f.size:SetText(tostring(ns.RAIDS[1][2])); f.notes:SetText("")
+  f:Update()
+  f:ClearAllPoints()
+  f:SetPoint("CENTER", 0, 60)
+  f:Show()
+end
+
 local function buildCalendar(page)
   local left = CreateFrame("Frame", nil, page)
   left:SetPoint("TOPLEFT"); left:SetPoint("BOTTOMLEFT"); left:SetWidth(384)
-  cal.list = List(left, { { "When", 118 }, { "Raid", 146 }, { "Coming", 56, "RIGHT" } })
+  -- Officers: the guild calendar bar and "New raid" under the list.
+  local tools = CreateFrame("Frame", nil, left)
+  tools:SetPoint("BOTTOMLEFT"); tools:SetPoint("BOTTOMRIGHT"); tools:SetHeight(66)
+  T.panel(tools)
+  cal.gcText = T.text(tools, "muted")
+  cal.gcText:SetPoint("TOPLEFT", 10, -8); cal.gcText:SetPoint("RIGHT", -96, 0)
+  cal.gcText:SetJustifyH("LEFT"); cal.gcText:SetWordWrap(true)
+  cal.gcButton = T.button(tools, "Add", 80, function() ns.gameCalStep() end)
+  cal.gcButton:SetPoint("TOPRIGHT", -8, -6)
+  cal.gcButton:SetScript("OnEnter", function(self)
+    if not self.tip then return end
+    GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+    GameTooltip:SetText(self.tip, 1, 1, 1, 1, true)
+    GameTooltip:Show()
+  end)
+  cal.gcButton:SetScript("OnLeave", function() GameTooltip:Hide() end)
+  cal.newButton = T.button(tools, "New raid", 110, showNewRaid, "tab")
+  cal.newButton:SetPoint("BOTTOMLEFT", 8, 6)
+  cal.tools = tools
+  local listHolder = CreateFrame("Frame", nil, left)
+  listHolder:SetPoint("TOPLEFT"); listHolder:SetPoint("RIGHT")
+  listHolder:SetPoint("BOTTOM", 0, 0)
+  cal.listHolder = listHolder
+  cal.list = List(listHolder, { { "When", 118 }, { "Raid", 146 }, { "Coming", 56, "RIGHT" } })
 
   local right = CreateFrame("Frame", nil, page)
   right:SetPoint("TOPLEFT", 398, 0); right:SetPoint("BOTTOMRIGHT")
@@ -673,7 +828,39 @@ local function renderCalendar()
       onClick = function() cal.selected = e.id; cal.role = nil; ns.refreshUI(true) end,
     }
   end
+  -- Raids this officer made in game, still on their way to the site.
+  for _, r in ipairs(ns.pendingRaids()) do
+    rows[#rows + 1] = {
+      cells = { color(T.HEX.muted, whenText(r.t)), color(T.HEX.muted, safe(r.title) .. " (to the site)"), color(T.HEX.muted, "–") },
+      onClick = function()
+        T.dialog({
+          title = "Waiting for the site",
+          text = safe(r.title) .. ", " .. whenText(r.t) .. (r.w and r.w > 1 and (", weekly for " .. r.w .. " weeks") or "")
+            .. ".\n\nIt goes to " .. ns.SITE .. " with the next guild sync (your /reload or logout, or a guildmate's who runs the Perpetua app). Drop it instead?",
+          accept = "Drop it",
+          onAccept = function() ns.cancelPendingRaid(r.k); ns.refreshUI(true) end,
+        })
+      end,
+    }
+  end
   cal.list:SetRows(rows)
+
+  local officer = ns.isOfficer(ns.selfName)
+  cal.tools:SetShown(officer)
+  cal.listHolder:SetPoint("BOTTOM", 0, officer and 74 or 0)
+  if officer then
+    local st = ns.gameCalStatus and ns.gameCalStatus()
+    if st then
+      cal.gcText:SetText((st.error and color("e06666", safe(st.text)) or safe(st.text)) .. (st.next and ("\n" .. color(T.HEX.muted, safe(st.next))) or ""))
+    else
+      cal.gcText:SetText(C_Calendar and color(T.HEX.muted, "Guild calendar is up to date.") or "")
+    end
+    cal.gcButton:SetShown(st ~= nil and st.button ~= nil)
+    if st and st.button then
+      cal.gcButton.label:SetText(st.button:upper())
+      cal.gcButton.tip = "One change per click: Blizzard's calendar takes one at a time."
+    end
+  end
 
   local C = cal.canvas
   C:Reset()
@@ -690,7 +877,7 @@ local function renderCalendar()
   end
   if not e then
     cal.title:SetText("NO RAIDS SCHEDULED")
-    cal.when:SetText(c and "Officers schedule raids on " .. ns.SITE .. "/raids." or "The calendar arrives from an officer's addon.")
+    cal.when:SetText(c and ("Officers schedule raids on " .. ns.SITE .. "/raids" .. (officer and " or with New raid below." or ".")) or "The calendar arrives from an officer's addon.")
     cal.mine:SetText(c and ("Calendar from " .. ns.ago(c.t)) or "")
     return
   end

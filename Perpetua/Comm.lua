@@ -90,6 +90,8 @@ function ns.refreshSelf(quiet)
   profile.alts = accountAlts(name, c.guild)
   local signups = ns.mySignups and ns.mySignups() or {}
   if #signups > 0 then profile.signups = signups end
+  local raids = ns.raidsForProfile and ns.raidsForProfile() or {}
+  if #raids > 0 then profile.raids = raids end
   -- A link code from /perpetua link: rides along until guild sync has used it (a week at most).
   local link = PerpetuaDB.link
   if link and link.code and ns.now() - (link.t or 0) < 7 * 86400 then profile.link = link.code else PerpetuaDB.link = nil end

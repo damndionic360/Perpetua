@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.12.0
+
+### New: schedule raids in game (officers)
+- Officers get **New raid** on the Calendar tab: raid, title, day, start time, length, players, weekly repeat and notes. The raid goes to perpetua.gg with guild sync (Create & sync sends it straight away), then to Discord and everyone's Calendar tab. Until the site has it, it shows in the list as "(to the site)"; click it to drop it.
+- The raid list now has Forever's raids first: Barrow Deeps, Hyjal Summit and Onyxia's Lair.
+
+### New: raids in the guild calendar
+- The site's raids can go into Blizzard's calendar as guild sign-up events, so everyone in the guild sees them, addon or not. Officers see a bar on the Calendar tab ("2 raids aren't on the guild calendar") with one button: each click adds the next raid, or takes off an event for a raid the site moved or cancelled. A raid already on the calendar (same title and time, whoever added it) isn't added twice.
+
 ## 2.11.1
 
 ### Fixes

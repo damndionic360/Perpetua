@@ -71,6 +71,8 @@ function ns.adoptCalendar(cal)
   local cur = ns.calendar()
   if cur and (cur.t or 0) >= cal.t then return false end
   store().calendar = cal
+  -- Raids this officer made in game that the site has now made: stop sending them.
+  if ns.prunePendingRaids() then ns.scheduleRefresh(2) end
   ns.fire()
   return true
 end
@@ -133,4 +135,57 @@ function ns.eventSignups(e)
   for _, s in pairs(byName) do list[#list + 1] = s end
   table.sort(list, function(a, b) return a.n < b.n end)
   return list
+end
+
+-- ---------- raids made in game ----------
+-- An officer's new raid waits in PerpetuaCharDB.raids and rides along with this character's profile, so guild
+-- sync carries it to whoever runs the Perpetua app; the site makes the raid (and its Discord event) from it
+-- (worker/raids.js applyAddonRaids). Once the site's calendar comes back with the raid's key, the wait is over.
+-- The site only accepts it if this character's owner is also an officer on Discord.
+
+-- { k, title, instance, t, dur, size, notes, w (weeks), made }
+function ns.pendingRaids()
+  PerpetuaCharDB.raids = PerpetuaCharDB.raids or {}
+  return PerpetuaCharDB.raids
+end
+
+-- Drops raids the site has made (its calendar carries their key) and ones whose start has passed.
+function ns.prunePendingRaids()
+  local list, cal = ns.pendingRaids(), ns.calendar()
+  local made = {}
+  for _, e in ipairs(cal and cal.events or {}) do if e.gk then made[e.gk] = true end end
+  local changed = false
+  for i = #list, 1, -1 do
+    local r = list[i]
+    if made[(ns.selfName or "") .. ":" .. r.k] or (r.t or 0) < ns.now() - 3600 then table.remove(list, i); changed = true end
+  end
+  return changed
+end
+
+-- The part of the profile the site reads.
+function ns.raidsForProfile()
+  ns.prunePendingRaids()
+  local out = {}
+  for _, r in ipairs(ns.pendingRaids()) do
+    out[#out + 1] = { k = r.k, title = r.title, instance = r.instance, t = r.t, dur = r.dur, size = r.size, notes = r.notes, w = r.w }
+  end
+  return out
+end
+
+function ns.createRaid(r)
+  if not ns.isOfficer(ns.selfName) then return false, "Only officers can schedule raids." end
+  if not (r.t and r.t > ns.now()) then return false, "Pick a time in the future." end
+  local list = ns.pendingRaids()
+  if #list >= 10 then return false, "Ten raids are already waiting for the site. Sync first." end
+  r.k = tostring(ns.now()) .. "-" .. math.random(1000, 9999)
+  r.made = ns.now()
+  list[#list + 1] = r
+  ns.refreshSelf()
+  return true
+end
+
+function ns.cancelPendingRaid(k)
+  local list = ns.pendingRaids()
+  for i = #list, 1, -1 do if list[i].k == k then table.remove(list, i) end end
+  ns.refreshSelf()
 end

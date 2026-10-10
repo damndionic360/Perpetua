@@ -12,6 +12,14 @@ ns.FORUMS = false -- the Forums tab and forum sync (part "F"); off until the sit
 ns.OLYMPUS = { "olympus" }
 ns.OLYMPUS_WHO = "Olympus" -- the guild part of the /who searches
 
+-- Raids officers can schedule in game (Calendar tab), with their size. Same names and order as INSTANCES in the
+-- site's worker/raids.js: Forever's raids first, then the classic ones Blizzard brings back later.
+ns.RAIDS = {
+  { "Barrow Deeps", 10 }, { "Hyjal Summit", 20 }, { "Onyxia's Lair", 40 },
+  { "Molten Core", 40 }, { "Blackwing Lair", 40 }, { "Zul'Gurub", 20 }, { "Ruins of Ahn'Qiraj", 20 },
+  { "Temple of Ahn'Qiraj", 40 }, { "Naxxramas", 40 }, { "Dungeon", 5 }, { "Other", 40 },
+}
+
 -- quests: any one completed counts; per faction where the two sides differ. items: holding one counts.
 -- short: column heading in the Attunements tab.
 ns.ATTUNEMENTS = {
