@@ -20,7 +20,8 @@ local function refreshRanks()
   rankCacheAt = GetTime()
 end
 
--- Guild Master and the rank below it, or any rank named like an officer rank.
+-- Guild Master and the rank below it, or a rank with "officer" in its name ("Officer", "Sr. Officer"). Not just any
+-- name with "leader" or "master" in it: "Raid Leader", "Quartermaster" and "Loot Master" aren't officers.
 function ns.isOfficer(name)
   if GetTime() - rankCacheAt > 60 then refreshRanks() end
   local r = rankCache[name]
@@ -30,7 +31,7 @@ function ns.isOfficer(name)
   end
   if r.index and r.index <= 1 then return true end
   local n = (r.name or ""):lower()
-  return n:find("officer") ~= nil or n:find("master") ~= nil or n:find("leader") ~= nil
+  return n:find("officer") ~= nil
 end
 
 -- ---------- the calendar ----------
@@ -68,6 +69,9 @@ end
 -- A calendar from SiteData.lua (this computer runs the Perpetua app) or from an officer in the guild.
 function ns.adoptCalendar(cal)
   if not valid(cal) then return false end
+  -- Not before the guild's name is known (it'd be filed under "No guild"), and not one stamped in the future:
+  -- a bad clock would make it "newer" than every real calendar after it.
+  if not ns.guildName() or cal.t > ns.now() + 86400 then return false end
   local cur = ns.calendar()
   if cur and (cur.t or 0) >= cal.t then return false end
   store().calendar = cal

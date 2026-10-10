@@ -250,6 +250,8 @@ local SECTIONS = {
 }
 
 local cached, dirty = {}, nil -- dirty = nil: everything
+local EMPTY_MEANS_UNLOADED = { gear = "gear", professions = "profs" }
+local emptyReads = {}
 function ns.markDirty(section)
   if dirty then dirty[section] = true end
 end
@@ -258,13 +260,23 @@ end
 function ns.collectProfile()
   local build, _, _, toc = GetBuildInfo()
   local d = { v = 1, addon = ns.VERSION, build = build and (build .. " (" .. tostring(toc) .. ")") }
-  local errors = {}
+  local errors, retry = {}, false
   for _, s in ipairs(SECTIONS) do
     local name, fn, fields = s[1], s[2], s[3]
     local c = cached[name]
     if s.always or not dirty or dirty[name] or not c then
       local ok, err = pcall(fn, d)
-      if ok then
+      -- Gear or professions that read empty after a good read usually mean the character isn't fully loaded
+      -- (loading screens, logging out). Keep the last good read, don't cache the empty one, and look again shortly.
+      -- (Only when the last read had something: a new character really can have no professions.)
+      local key = EMPTY_MEANS_UNLOADED[name]
+      -- After three empty reads in a row it's real (they took everything off), and that's what gets saved.
+      if ok and key and #(d[key] or {}) == 0 and c and #(c[key] or {}) > 0 and (emptyReads[name] or 0) < 3 then
+        emptyReads[name] = (emptyReads[name] or 0) + 1
+        for _, f in ipairs(fields) do d[f] = c[f] end
+        retry = true
+      elseif ok then
+        emptyReads[name] = nil
         c = {}
         for _, f in ipairs(fields) do c[f] = d[f] end
         cached[name] = c
@@ -276,8 +288,11 @@ function ns.collectProfile()
       for _, f in ipairs(fields) do d[f] = c[f] end
     end
   end
-  -- The talents section names the spec from the trees and needs the class; it's re-run when the character is.
   dirty = {}
+  if retry then
+    for name in pairs(EMPTY_MEANS_UNLOADED) do dirty[name] = true end
+    ns.scheduleRefresh(10)
+  end
   if #errors > 0 then d.errors = errors end
   return d
 end
@@ -313,15 +328,42 @@ end
 -- (rec.pz, rec.rz: "PERP1Z:..." from ns.pack) and rec.profile holds just this summary, which the lists read.
 -- Your own characters keep full tables: they're what you send.
 local SUMMARY_CHAR = { "name", "surname", "class", "classFile", "level", "race", "raceFile", "faction", "guild", "guildRank" }
+-- What guild sync hands us is someone else's data: keep only the right types, so one odd profile can't break the
+-- pages that list everyone.
+local function str(v, max) return type(v) == "string" and v:sub(1, max or 64) or nil end
+local function n(v) return type(v) == "number" and v or nil end
+local function list(v, max, fn)
+  local out = {}
+  if type(v) ~= "table" then return out end
+  for _, x in ipairs(v) do
+    local y = fn(x)
+    if y ~= nil then out[#out + 1] = y end
+    if #out >= max then break end
+  end
+  return out
+end
+
 function ns.summarize(p)
-  local c, out = p.char or {}, {}
-  for _, k in ipairs(SUMMARY_CHAR) do out[k] = c[k] end
-  local profs = {}
-  for _, x in ipairs(p.profs or {}) do profs[#profs + 1] = { n = x.n, r = x.r, m = x.m, p = x.p } end
-  return {
-    v = p.v, addon = p.addon, t = p.t, char = out, spec = p.spec, profs = profs, quests = p.quests, items = p.items,
-    alts = p.alts, signups = p.signups, il = ns.avgItemLevel(p), summary = true,
+  local c, out = type(p.char) == "table" and p.char or {}, {}
+  for _, k in ipairs(SUMMARY_CHAR) do out[k] = k == "level" and n(c[k]) or str(c[k]) end
+  local spec = type(p.spec) == "table" and { n = str(p.spec.n), role = str(p.spec.role), class = str(p.spec.class) } or nil
+  local items = {}
+  for k, v in pairs(type(p.items) == "table" and p.items or {}) do
+    if type(k) == "string" and n(v) then items[k] = v end
+  end
+  local profs = list(p.profs, 12, function(x)
+    return type(x) == "table" and str(x.n) and { n = str(x.n), r = n(x.r), m = n(x.m), p = n(x.p) } or nil
+  end)
+  local summary = {
+    v = n(p.v), addon = str(p.addon, 24), t = n(p.t), char = out, spec = spec, profs = profs, items = items,
+    quests = list(p.quests, 200, n),
+    alts = list(p.alts, 30, function(a) return type(a) == "table" and str(a.n) and { n = str(a.n), s = str(a.s), c = str(a.c), sp = str(a.sp), l = n(a.l) } or nil end),
+    signups = list(p.signups, 30, function(x) return type(x) == "table" and n(x.e) and { e = n(x.e), s = str(x.s, 16), r = str(x.r, 16), t = n(x.t) } or nil end),
+    summary = true,
   }
+  local ok, il = pcall(ns.avgItemLevel, p) -- their gear list could be malformed too
+  summary.il = ok and n(il) or nil
+  return summary
 end
 
 -- The whole profile + recipes for a player, merged (the Character page). The last one unpacked is kept, so

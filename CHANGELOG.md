@@ -8,6 +8,19 @@
 - Notes, the message of the day and guild information open **Blizzard's guild window**, where the game allows the edit; the Perpetua window steps aside while it's open.
 - These need you out of combat (the game won't move its secure buttons in combat).
 
+### More fixes from a review before release
+- "Change rank…" in the right-click menu no longer errors.
+- Buffs, food and flasks no longer make your profile re-send to the whole guild (in a raid that was constant traffic); new profiles are also held back during combat and in raid instances and go out afterwards.
+- Guild sync waits out boss fights (when the game pauses addon messages) instead of dropping loot lines and profile pieces.
+- A loading screen can't wipe your gear or professions from your profile.
+- Promote twice in a row without moving the mouse; the hidden secure button is put away when combat starts or its window closes, so a stray click can't run an old command.
+- Escape closes just the dialog or form you're in, not the whole Perpetua window.
+- Officer-only things (posting the calendar) now go by officer rank: "Raid Leader", "Quartermaster" or "Loot Master" ranks no longer count.
+- A calendar stamped in the future can't block newer ones; nothing received in the first moments after login lands in a stray "No guild" list.
+- Profiles you already have aren't unpacked again when someone else asks for them; the window redraws less when nothing changed; a gear change isn't pushed back by looting.
+- One guildmate's malformed profile can't blank the Guild, Attunements or Calendar pages.
+- Setup stops greeting you as new once you've opened any other page.
+
 ### Lighter and faster
 - Guildmates' full profiles and recipes are now kept compressed and only unpacked when you open their Character page or the Crafters page; the lists use a small summary. About a quarter of the memory per guildmate (32 KB down to 8 KB in testing), which adds up in a big guild. Saved data from older versions is converted once at login.
 - Your own profile only re-reads what changed: a bag update checks attunement items, a talent change reads talents, and so on, instead of everything (talents and reputations were the slow parts). An unchanged profile isn't re-hashed or re-sent.

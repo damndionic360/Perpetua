@@ -22,6 +22,7 @@ end
 function ns.adoptForums(f)
   if not ns.FORUMS then return false end
   if type(f) ~= "table" or not tonumber(f.t) or type(f.threads) ~= "table" or type(f.boards) ~= "table" then return false end
+  if not ns.guildName() or f.t > ns.now() + 86400 then return false end -- same rules as the calendar
   local cur = ns.forums()
   if cur and (cur.t or 0) >= f.t then return false end
   store().forums = f

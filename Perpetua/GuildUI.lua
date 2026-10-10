@@ -155,6 +155,9 @@ function A.disband()
 end
 ns.guildActions = A
 
+-- Sorted by the last column (online first, then most recently seen) until a header is clicked.
+local R = { showOffline = true, alts = false, filter = "", sort = 8, desc = false, selected = nil }
+
 -- ---------- right-click menu ----------
 
 local function memberMenu(owner, m)
@@ -180,8 +183,6 @@ end
 
 -- ---------- member panel ----------
 
--- Sorted by the last column (online first, then most recently seen) until a header is clicked.
-local R = { showOffline = true, alts = false, filter = "", sort = 8, desc = false, selected = nil }
 
 local function noteBox(parent, label)
   local b = CreateFrame("Button", nil, parent)
@@ -637,8 +638,15 @@ local ev = CreateFrame("Frame")
 for _, e in ipairs({ "GUILD_ROSTER_UPDATE", "GUILD_MOTD", "GUILD_EVENT_LOG_UPDATE", "GUILD_RANKS_UPDATE", "PLAYER_GUILD_UPDATE" }) do
   pcall(ev.RegisterEvent, ev, e)
 end
+-- Which pages show what these events change; other pages aren't redrawn for them.
+local SHOWS = {
+  GUILD_ROSTER_UPDATE = { Guild = true, ["Guild Info"] = true }, GUILD_RANKS_UPDATE = { Guild = true, ["Guild Info"] = true },
+  GUILD_MOTD = { ["Guild Info"] = true }, GUILD_EVENT_LOG_UPDATE = { ["Guild Info"] = true },
+}
 ev:SetScript("OnEvent", function(_, event, arg1)
   -- Blizzard's member panel asks for a fresh roster when the update says it may.
   if event == "GUILD_ROSTER_UPDATE" and arg1 and PerpetuaFrame and PerpetuaFrame:IsShown() then try(C_GuildInfo.GuildRoster) end
+  local pages = SHOWS[event]
+  if pages and not pages[ns.currentTabForTest and ns.currentTabForTest() or ""] then return end
   ns.refreshUI()
 end)

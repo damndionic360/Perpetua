@@ -71,6 +71,7 @@ local function accountAlts(me, guild)
 end
 
 local last = {} -- this session's last profile text and recipes change count, to skip unchanged work
+local VOLATILE = { "stats", "res" }
 
 -- Re-reads this character and, if anything changed, tells the guild.
 function ns.refreshSelf(quiet)
@@ -103,15 +104,18 @@ function ns.refreshSelf(quiet)
   local changed = false
   -- Same text as last time (the encoder sorts keys): nothing changed, no need to hash it. Lua compares equal
   -- strings in constant time.
+  -- The fingerprint leaves out what buffs, food and flasks move (stats, resistances): those alone would re-send the
+  -- whole profile to the guild every few minutes in a raid. They still go along whenever anything else changes.
+  local volatile = {}
+  for _, k in ipairs(VOLATILE) do volatile[k] = profile[k]; profile[k] = nil end
   local json = ns.toJson(profile)
+  for k, v in pairs(volatile) do profile[k] = v end
   if json ~= last.json or last.name ~= name then
     last.json, last.name = json, name
     local pv = ns.hash(json)
-    if me.pv ~= pv then
-      me.profile, me.pv, me.pt = profile, pv, ns.now()
-      changed = true
-    end
+    if me.pv ~= pv then me.pv, me.pt, changed = pv, ns.now(), true end
   end
+  me.profile = profile -- the latest read, stats included, for the site and the next send
   -- Recipes only change when a profession window was read (ns.onRecipesChanged).
   if last.recipes ~= (ns.recipesChanged or 0) or last.recipesFor ~= name then
     last.recipes, last.recipesFor = ns.recipesChanged or 0, name
@@ -127,9 +131,14 @@ function ns.refreshSelf(quiet)
   ns.fire()
 end
 
-local refreshTimer
+-- One pending refresh; a new request only moves it sooner (looting fires bag updates with a 60 s delay all the time,
+-- which used to keep pushing a gear change's 15 s refresh back indefinitely).
+local refreshTimer, refreshDue = nil, 0
 function ns.scheduleRefresh(delay)
+  local due = GetTime() + (delay or 15)
+  if refreshTimer and refreshDue <= due then return end
   if refreshTimer then refreshTimer:Cancel() end
+  refreshDue = due
   refreshTimer = C_Timer.NewTimer(delay or 15, function() refreshTimer = nil; ns.refreshSelf() end)
 end
 ns.onRecipesChanged = function() ns.recipesChanged = (ns.recipesChanged or 0) + 1; ns.scheduleRefresh(5) end
@@ -147,6 +156,7 @@ local function enqueue(msg)
 end
 
 local THROTTLED = { [3] = true, [8] = true } -- Enum.SendAddonMessageResult AddonMessageThrottle / ChannelThrottle
+local LOCKDOWN, NOT_IN_GUILD = 11, 10       -- AddOnMessageLockdown (boss fights and the like) / NotInGuild
 
 function pump()
   if not queue[1] then
@@ -170,6 +180,12 @@ function pump()
     elseif ok and THROTTLED[result] then
       item.wait = now + 1 -- the server's limit; try the same message again shortly
       return
+    elseif ok and result == LOCKDOWN then
+      item.wait = now + 3 -- addon messages are paused (a boss fight): wait it out, it doesn't count as a failure
+      return
+    elseif ok and result == NOT_IN_GUILD then
+      wipe(queue)
+      return
     else
       -- Blocked (combat in an instance, not in a guild yet …): back off, give up after a while.
       item.tries = item.tries + 1
@@ -179,8 +195,19 @@ function pump()
   end
 end
 
+-- Not in combat or a raid instance: guildmates would all ask for the new profile at once, mid-fight. It goes out
+-- when that's over (the frame at the bottom).
+local function busy()
+  if InCombatLockdown() then return true end
+  local _, kind = ns.try(IsInInstance)
+  return kind == "raid"
+end
+local heldAnnounce = false
+
 function ns.announce()
   if not (IsInGuild() and ns.selfName) or ns.locked() then return end
+  if busy() then heldAnnounce = true return end
+  heldAnnounce = false
   local me = ns.me()
   -- Nothing saved for this character in this guild yet (the guild just changed): read it again, which announces.
   if not me then ns.scheduleRefresh(2) return end
@@ -195,6 +222,7 @@ function ns.sendLine(fields)
 end
 
 local lastSent, sendPending = {}, {}
+local packed = {} -- part -> { v = version, s = packed string }: re-sends reuse it instead of encoding again
 
 local function sendPart(part)
   local me = ns.me()
@@ -210,6 +238,19 @@ local function sendPart(part)
   C_Timer.After(2, function()
     sendPending[part] = nil
     me = ns.me()
+    if not me then return end
+    -- Read the version now: the data may have changed during the wait.
+    version = part == "P" and me.pv or part == "R" and me.rv or part == "C" and ns.calendarVersion()
+      or part == "F" and ns.forumsVersion() or nil
+    if not version then return end
+    local cachedPack = packed[part]
+    if cachedPack and cachedPack.v == version then
+      local s = cachedPack.s
+      local n = math.ceil(#s / CHUNK)
+      for i = 1, n do enqueue(table.concat({ "D", part, version, i, n, s:sub((i - 1) * CHUNK + 1, i * CHUNK) }, "\t")) end
+      lastSent[part] = { v = version, at = GetTime() }
+      return
+    end
     local payload
     if part == "P" then
       payload = {}
@@ -225,6 +266,7 @@ local function sendPart(part)
       payload = { t = me.rt, r = me.recipes }
     end
     local s = ns.pack(payload)
+    packed[part] = { v = version, s = s }
     if #s > MAX_PAYLOAD then return end
     local n = math.ceil(#s / CHUNK)
     for i = 1, n do
@@ -319,6 +361,8 @@ end
 
 local function onMessage(text, channel, sender)
   if channel ~= "GUILD" or type(text) ~= "string" or ns.locked() then return end
+  -- Just after login the guild's name may not be known yet; anything stored now would land under "No guild".
+  if not ns.guildName() then return end
   local from = ns.playerKey(sender)
   if not from or from == ns.selfName then return end
   local f = { strsplit("\t", text) }
@@ -327,6 +371,7 @@ local function onMessage(text, channel, sender)
     local players = ns.players()
     local rec = players[from] or {}
     players[from] = rec
+    local wasAddon, newHere = rec.addon, not ns.session.heard[from]
     rec.heard, rec.addon = ns.now(), f[4] ~= "dev" and f[4] or rec.addon -- a test install says "dev"
     ns.noteVersion(f[4])
     -- Someone new this session: answer with our own hello so they can catch up on us too.
@@ -343,7 +388,8 @@ local function onMessage(text, channel, sender)
     if calT and calT > (tonumber(ns.calendarVersion()) or 0) and ns.isOfficer(from) then request(from, "C", f[5]) end
     local forumT = tonumber(f[6])
     if ns.FORUMS and forumT and forumT > (tonumber(ns.forumsVersion()) or 0) and ns.isOfficer(from) then request(from, "F", f[6]) end
-    ns.fire()
+    -- A hello only changes the window when it's someone new or their addon version changed.
+    if newHere or wasAddon ~= rec.addon then ns.fire() end
   elseif kind == "L" or kind == "R" then
     ns.onLootMessage(f, from)
   elseif kind == "Q" then
@@ -352,6 +398,11 @@ local function onMessage(text, channel, sender)
   elseif kind == "D" then
     local part, version, i, n, chunk = f[2], f[3], tonumber(f[4]), tonumber(f[5]), f[6]
     if not (part and version and i and n and chunk) or n < 1 or n > MAX_PAYLOAD / CHUNK or i < 1 or i > n then return end
+    -- Someone else asked for it and we already have this version: don't collect and unpack it all again.
+    local rec = ns.players()[from]
+    local have = part == "P" and rec and rec.pv or part == "R" and rec and rec.rv
+      or part == "C" and ns.calendarVersion() or part == "F" and ns.forumsVersion() or nil
+    if have == version then return end
     local key = from .. part .. version
     local b = buffers[key]
     if not b or b.n ~= n then b = { n = n, got = 0, parts = {} }; buffers[key] = b end
@@ -363,6 +414,13 @@ local function onMessage(text, channel, sender)
     end
   end
 end
+
+-- A held announcement goes out once combat or the raid instance is over.
+local heldFrame = CreateFrame("Frame")
+for _, e in ipairs({ "PLAYER_REGEN_ENABLED", "PLAYER_ENTERING_WORLD", "ZONE_CHANGED_NEW_AREA" }) do pcall(heldFrame.RegisterEvent, heldFrame, e) end
+heldFrame:SetScript("OnEvent", function()
+  if heldAnnounce then C_Timer.After(3, function() if heldAnnounce and not busy() then ns.announce() end end) end
+end)
 
 -- ---------- start ----------
 

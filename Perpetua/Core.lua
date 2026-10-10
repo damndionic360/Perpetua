@@ -65,9 +65,9 @@ events:SetScript("OnEvent", function(_, event, ...)
   if event == "CHAT_MSG_ADDON" then
     ns.onAddonMessage(...)
   elseif event == "CHAT_MSG_LOOT" then
-    if not ns.locked() then pcall(ns.onLootChat, ...) end
+    if not ns.locked() and ns.guildName() then pcall(ns.onLootChat, ...) end
   elseif event == "CHAT_MSG_SYSTEM" then
-    if not ns.locked() then pcall(ns.onSystemChat, ...) end
+    if not ns.locked() and ns.guildName() then pcall(ns.onSystemChat, ...) end
   elseif event == "ADDON_LOADED" then
     if ... == "Perpetua" then
       PerpetuaDB = PerpetuaDB or {}

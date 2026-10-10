@@ -382,6 +382,18 @@ function T.panel(frame)
   T.outline(frame, 0, C.gold, 0.32)
 end
 
+-- Escape closes this frame only. (Frames in UISpecialFrames all close together, so a dialog listed there took the
+-- whole Perpetua window with it.) In combat the key can't be kept from the game, so there it just closes.
+function T.escapeCloses(f)
+  f:EnableKeyboard(true)
+  pcall(f.SetPropagateKeyboardInput, f, true) -- other keys (movement!) keep working, in combat too
+  f:SetScript("OnKeyDown", function(self, key)
+    local own = key == "ESCAPE"
+    if not InCombatLockdown() then pcall(self.SetPropagateKeyboardInput, self, not own) end
+    if own then self:Hide() end
+  end)
+end
+
 -- Addons can't open a browser, so a web address is shown in a box, selected, ready for Ctrl+C.
 local copyBox
 function T.copyBox(title, url)
@@ -396,7 +408,7 @@ function T.copyBox(title, url)
     f:SetScript("OnDragStart", f.StartMoving)
     f:SetScript("OnDragStop", f.StopMovingOrSizing)
     T.window(f)
-    tinsert(UISpecialFrames, "PerpetuaCopyBox")
+    T.escapeCloses(f)
     f.title = T.text(f, "heading")
     f.title:SetPoint("TOPLEFT", 22, -20)
     f.title:SetPoint("RIGHT", -50, 0)
@@ -453,7 +465,7 @@ function T.dialog(opts)
     f:SetScript("OnDragStop", f.StopMovingOrSizing)
     f:SetClampedToScreen(true)
     T.window(f)
-    tinsert(UISpecialFrames, "PerpetuaDialog")
+    T.escapeCloses(f)
     f.title = T.text(f, "heading")
     f.title:SetPoint("TOPLEFT", 22, -20); f.title:SetPoint("RIGHT", -22, 0)
     f.body = T.text(f, "body")

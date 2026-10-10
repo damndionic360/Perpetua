@@ -65,49 +65,95 @@ local function onEnter(self)
   if hovering.secureTip then GameTooltip:AddLine(hovering.secureTip, 1, 1, 1, true) end
   GameTooltip:Show()
 end
+-- Parks a secure button: hidden, and the command button disarmed, so nothing is left waiting under the mouse.
+local function park(b)
+  if InCombatLockdown() then return end
+  b:Hide(); b:ClearAllPoints()
+  if b == action then action:SetAttribute("macrotext", nil) end
+end
 local function onLeave(self)
   if hovering then try(hovering.UnlockHighlight, hovering) end
   GameTooltip:Hide()
   hovering, hoverSecure = nil, nil
-  if not InCombatLockdown() then self:Hide(); self:ClearAllPoints() end
+  park(self)
 end
+-- Combat is about to lock them in place: park both now (still allowed while PLAYER_REGEN_DISABLED runs). After
+-- combat, one the mouse isn't on goes away too.
+local guard = CreateFrame("Frame")
+guard:RegisterEvent("PLAYER_REGEN_DISABLED")
+guard:RegisterEvent("PLAYER_REGEN_ENABLED")
+guard:SetScript("OnEvent", function(_, event)
+  for _, b in ipairs({ blizzard, action }) do
+    if b:IsShown() and (event == "PLAYER_REGEN_DISABLED" or not b:IsMouseOver()) then
+      if hovering then try(hovering.UnlockHighlight, hovering) end
+      hovering, hoverSecure = nil, nil
+      GameTooltip:Hide()
+      b:Hide(); b:ClearAllPoints()
+      if b == action then action:SetAttribute("macrotext", nil) end
+    end
+  end
+end)
 for _, b in ipairs({ blizzard, action }) do
   b:SetScript("OnEnter", onEnter)
   b:SetScript("OnLeave", onLeave)
 end
 -- The Perpetua window steps aside so Blizzard's has the screen.
 blizzard:SetScript("PreClick", function() if hoverSecure == blizzard and PerpetuaFrame then PerpetuaFrame:Hide() end end)
--- After a guild command: whatever our button wants to do next (close a dialog, refresh the roster).
+-- After a guild command: whatever our button wants to do next (close a dialog, refresh the roster). If the mouse is
+-- still on our button once the roster has updated, it's armed again with the new command (promote twice in a row).
+local rearm
 action:SetScript("PostClick", function(self, _, down)
   if down then return end -- the action happens on the up
   if ns.DEV then print("|cffd4af37Perpetua|r (dev): ran " .. tostring(self:GetAttribute("macrotext"))) end
   local target = hovering
   if target and target.secureAfter then target.secureAfter() end
-  if not InCombatLockdown() then onLeave(self) end
+  onLeave(self)
+  if target then C_Timer.After(0.8, function() rearm(target) end) end
 end)
 
 local function inCombatNote(what)
   print("|cffd4af37Perpetua|r: " .. what .. " only works out of combat (the game hands it to Blizzard's UI, which won't move in combat).")
 end
 
+-- Puts the command button back over our button if the mouse is (still) on it and there's something to run.
+function rearm(target)
+  if InCombatLockdown() or not (target and target:IsVisible() and target:IsMouseOver() and target.secureCommand) then return end
+  if hovering then return end
+  local text = target.secureCommand()
+  if not text then return end
+  action:SetAttribute("macrotext", text)
+  float(action, target)
+end
+
 function ns.opensBlizzardGuild(button, title, tip)
   button.secureTitle, button.secureTip = title, tip
   button:HookScript("OnEnter", function(self) if GuildMicroButton then float(blizzard, self) end end)
-  -- Only reached when the secure button wasn't over it.
-  button:HookScript("OnClick", function() inCombatNote("Opening Blizzard's guild window from here") end)
+  -- Our button and the secure one go away together (a dialog closing under the mouse, say).
+  button:HookScript("OnHide", function(self) if hovering == self then onLeave(hoverSecure) end end)
+  -- Only reached when the secure button wasn't over it: in combat, or the mouse never left after a click.
+  button:HookScript("OnClick", function(self)
+    if InCombatLockdown() then inCombatNote("Opening Blizzard's guild window from here")
+    elseif GuildMicroButton then float(blizzard, self) end -- the next click takes
+  end)
 end
 
 -- Our button runs a guild slash command through the secure button. command() returns the macro text, or nil when
 -- there's nothing to do (then our button keeps the click); after() runs once it's done.
 function ns.secureGuildCommand(button, command, title, tip, after)
-  button.secureTitle, button.secureTip, button.secureAfter = title, tip, after
+  button.secureTitle, button.secureTip, button.secureAfter, button.secureCommand = title, tip, after, command
   button:HookScript("OnEnter", function(self)
     local text = command()
     if not text then return end
     action:SetAttribute("macrotext", text)
     float(action, self)
   end)
-  button:HookScript("OnClick", function() if command() then inCombatNote("That") end end)
+  button:HookScript("OnHide", function(self) if hovering == self then onLeave(hoverSecure) end end)
+  -- Only reached when the secure button wasn't over it: in combat, or the mouse never left after the last click
+  -- (then it's armed now and the next click runs it).
+  button:HookScript("OnClick", function(self)
+    if not command() then return end
+    if InCombatLockdown() then inCombatNote("That") else rearm(self) end
+  end)
 end
 
 -- Blizzard's slash command for a guild action, as this client spells it.

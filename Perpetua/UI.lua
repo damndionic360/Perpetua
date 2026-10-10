@@ -649,7 +649,7 @@ local function showNewRaid()
     f:SetScript("OnDragStop", f.StopMovingOrSizing)
     f:SetClampedToScreen(true)
     T.window(f)
-    tinsert(UISpecialFrames, "PerpetuaNewRaid")
+    T.escapeCloses(f)
     local title = T.text(f, "heading")
     title:SetPoint("TOPLEFT", 22, -20)
     title:SetText("NEW RAID")
@@ -1673,6 +1673,8 @@ function ns.showTab(name)
   if not pages[name] then name = "Guild" end -- a switched-off page (ns.FORUMS)
   local locked = ns.locked()
   if locked then name = "Welcome" elseif name == "Welcome" then name = lastTab or (not PerpetuaDB.setupSeen and "Setup") or "Guild" end
+  -- Going anywhere but Setup counts as having seen it: no more "new here?" at login, no landing on Setup.
+  if not locked and name ~= "Setup" and name ~= "Welcome" then PerpetuaDB.setupSeen = true end
   if name ~= "Welcome" then lastTab = name end
   current = name
   -- Pages that come with the New guild window go away when it's off.
