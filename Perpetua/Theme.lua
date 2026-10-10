@@ -297,6 +297,20 @@ function T.button(parent, label, width, onClick, kind)
   end
   b:SetSelected(false)
   b:SetScript("OnClick", onClick)
+  -- Greyed out and unclickable when there's nothing it can do; why goes in the tooltip (optional).
+  function b:SetUsable(on, why)
+    on = on and true or false
+    self:SetEnabled(on)
+    self:SetAlpha(on and 1 or 0.4)
+    self.why = not on and why or nil
+  end
+  b:HookScript("OnEnter", function(self)
+    if not self.why then return end
+    GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+    GameTooltip:SetText(self.why, 1, 1, 1, 1, true)
+    GameTooltip:Show()
+  end)
+  b:HookScript("OnLeave", function(self) if self.why then GameTooltip:Hide() end end)
   return b
 end
 

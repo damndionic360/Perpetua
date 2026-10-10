@@ -75,6 +75,7 @@ local function rights(m)
   local promote, demote = try(CanGuildPromote), try(CanGuildDemote)
   return {
     -- One rank up (never to your own rank or above) or one down.
+    ranks = not m.isSelf and (promote or demote) and m.rankOrder > mine and true or false, -- show the two buttons
     promote = not m.isSelf and promote and m.rankOrder > mine + 1,
     demote = not m.isSelf and demote and m.rankOrder < maxRank and m.rankOrder > mine,
     remove = not m.isSelf and try(CanGuildRemove) and m.rankOrder > mine,
@@ -288,7 +289,8 @@ local function renderPanel(p, m, others, info)
     end
   end
   local show = {
-    whisper = not m.isSelf, group = not m.isSelf and m.online, promote = r.promote and true or false, demote = r.demote and true or false,
+    -- Promote and Demote stay put for officers (greyed out when that move isn't possible) so the panel doesn't shift.
+    whisper = not m.isSelf, group = not m.isSelf and m.online, promote = r.ranks, demote = r.ranks,
     profile = ns.players()[m.name] ~= nil, leader = r.leader, remove = r.remove, leave = m.isSelf,
   }
   local order = {}
@@ -297,6 +299,9 @@ local function renderPanel(p, m, others, info)
   end
   p.buttons.promote.label:SetText(r.promote and ("▲ " .. rankName(m.rankOrder - 1)):upper() or "PROMOTE")
   p.buttons.demote.label:SetText(r.demote and ("▼ " .. rankName(m.rankOrder + 1)):upper() or "DEMOTE")
+  p.buttons.promote:SetUsable(r.promote, "Can't promote " .. m.name .. " further: the next rank up is yours or above, or your rank can't promote.")
+  p.buttons.demote:SetUsable(r.demote, m.rankOrder >= (ns.num(try(GuildControlGetNumRanks)) or 0)
+    and (m.name .. " is already at the lowest rank.") or ("Can't demote " .. m.name .. ": your rank can't demote."))
   local rows = math.ceil(#order / 2)
   for i, key in ipairs(order) do
     local b = p.buttons[key]
