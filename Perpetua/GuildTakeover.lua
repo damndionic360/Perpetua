@@ -31,9 +31,14 @@ blizzard:Hide() -- bindings click it while hidden; it only shows while floating 
 local hovering
 local function float(target)
   if InCombatLockdown() or not GuildMicroButton then return end
+  -- Protected frames can't be anchored to ours (the client refuses), so it goes on UIParent at the same screen spot.
+  local left, bottom, w, h = target:GetLeft(), target:GetBottom(), target:GetWidth(), target:GetHeight()
+  if not (left and bottom and w and h) then return end
+  local k = target:GetEffectiveScale() / UIParent:GetEffectiveScale()
   hovering = target
   blizzard:ClearAllPoints()
-  blizzard:SetAllPoints(target)
+  blizzard:SetPoint("BOTTOMLEFT", UIParent, "BOTTOMLEFT", left * k, bottom * k)
+  blizzard:SetSize(w * k, h * k)
   blizzard:SetFrameStrata(target:GetFrameStrata())
   blizzard:SetFrameLevel(target:GetFrameLevel() + 10)
   blizzard:Show()
