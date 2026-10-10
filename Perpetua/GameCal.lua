@@ -49,8 +49,17 @@ local function realmDate(t) return date("*t", t + realmOffset()) end
 
 -- Looks through one day for a guild event with this title starting at this minute. Returns the day event's index
 -- with the month already selected (monthOffset 0), or nil.
+-- Switching months makes the game fire CALENDAR_UPDATE_EVENT_LIST on the spot, so: switch only when the month
+-- differs, and ignore calendar events during a scan and just after it (see the event handler).
+local onMonth, scanning, scannedAt = nil, false, 0
+local function showMonth(month, year)
+  if onMonth and onMonth.month == month and onMonth.year == year then return end
+  C_Calendar.SetAbsMonth(month, year)
+  onMonth = { month = month, year = year }
+end
+
 local function findOnDay(title, d)
-  C_Calendar.SetAbsMonth(d.month, d.year)
+  showMonth(d.month, d.year)
   for i = 1, (C_Calendar.GetNumDayEvents(0, d.day) or 0) do
     local ev = C_Calendar.GetDayEvent(0, d.day, i)
     if ev and (ev.calendarType == "GUILD_EVENT" or ev.calendarType == "GUILD_ANNOUNCEMENT")
@@ -63,9 +72,13 @@ end
 
 -- Runs fn with the calendar on whatever month it needs, then puts Blizzard's calendar back on its month.
 local function keepingMonth(fn)
+  if scanning then return nil end
+  scanning = true
   local cur = C_Calendar.GetMonthInfo(0)
+  onMonth = cur and cur.month and { month = cur.month, year = cur.year } or nil
   local ok, a, b = pcall(fn)
-  if cur and cur.month then pcall(C_Calendar.SetAbsMonth, cur.month, cur.year) end
+  if cur and cur.month then pcall(showMonth, cur.month, cur.year) end
+  scanning, scannedAt = false, GetTime()
   if not ok then lastError = tostring(a) return nil end
   return a, b
 end
@@ -222,6 +235,7 @@ end
 
 -- ---------- events ----------
 
+local pendingCheck = false
 local f = CreateFrame("Frame")
 for _, ev in ipairs({ "PLAYER_LOGIN", "CALENDAR_UPDATE_EVENT_LIST", "CALENDAR_NEW_EVENT", "CALENDAR_UPDATE_ERROR",
   "CALENDAR_UPDATE_ERROR_WITH_COUNT", "CALENDAR_UPDATE_ERROR_WITH_PLAYER_NAME" }) do
@@ -233,10 +247,17 @@ f:SetScript("OnEvent", function(_, event, ...)
     -- Ask the server for the calendar a little after login; the list arrives as CALENDAR_UPDATE_EVENT_LIST.
     C_Timer.After(12, function() pcall(C_Calendar.OpenCalendar) end)
   elseif event == "CALENDAR_UPDATE_EVENT_LIST" or event == "CALENDAR_NEW_EVENT" then
+    -- Our own month switches echo back as updates: ignore those, and look again a moment later, once, for the rest.
+    if scanning or (event == "CALENDAR_UPDATE_EVENT_LIST" and loaded and not busy and GetTime() - scannedAt < 1) then return end
     local first = not loaded
     local wasBusy = busy
     loaded, busy = true, false
-    if recheck() or first or wasBusy then ns.refreshUI() end
+    if pendingCheck then return end
+    pendingCheck = true
+    C_Timer.After(0.5, function()
+      pendingCheck = false
+      if recheck() or first or wasBusy then ns.refreshUI() end
+    end)
   elseif event:find("^CALENDAR_UPDATE_ERROR") then
     local message, extra = ...
     local text = message and _G[message] or tostring(message)
