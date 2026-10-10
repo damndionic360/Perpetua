@@ -3,8 +3,10 @@
 ## 2.13.0
 
 ### Fixes: guild officer tools work again
-- Forever only lets Blizzard's own UI set a rank directly, remove by character ID, or change notes, the message of the day and guild info, so those buttons failed. Ranks now change with **Promote** and **Demote** (one rank per click; the buttons name the rank they move to), and Remove uses the guild's uninvite.
-- Notes, the message of the day and guild information open **Blizzard's guild window**, where the game allows the edit. Our buttons open it through a secure click, so Blizzard's window keeps working as normal; the Perpetua window steps aside while it's open.
+- Forever blocks addons from changing ranks, removing members, making a new leader, leaving or disbanding, and from changing notes, the message of the day and guild info ("blocked from an action only available to the Blizzard UI"). Those buttons now go through Blizzard's own secure guild commands (/gpromote, /gdemote, /gremove, /gleader, /gquit, /gdisband) on your click, exactly as if you typed them.
+- **Promote** and **Demote** move one rank per click; the buttons name the rank they move to. In the right-click menu, "Change rank…" opens the member panel.
+- Notes, the message of the day and guild information open **Blizzard's guild window**, where the game allows the edit; the Perpetua window steps aside while it's open.
+- These need you out of combat (the game won't move its secure buttons in combat).
 
 ### New
 - **Guild Control** button (Guild page and Guild Info, for officers): Blizzard's window for rank names and permissions, adding and removing ranks, and guild bank tabs.

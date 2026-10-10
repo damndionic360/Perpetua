@@ -25,49 +25,92 @@ blizzard:SetAttribute("useOnKeyDown", false)
 
 blizzard:Hide() -- bindings click it while hidden; it only shows while floating over one of our buttons (below)
 
--- Buttons in the Perpetua window that open Blizzard's guild window (notes, message of the day, guild info: the
--- game only lets Blizzard's own UI change those). Our buttons can't click Blizzard's securely, so on hover the secure
--- button above moves over ours and takes the click itself. In combat it can't move, so the click just says so.
-local hovering
-local function float(target)
-  if InCombatLockdown() or not GuildMicroButton then return end
+-- Secure clicks from the Perpetua window. The game lets only Blizzard's own UI change ranks, remove members, change
+-- notes and so on; an addon calling those gets "blocked from an action only available to the Blizzard UI". Two
+-- secure buttons do it for us, each a real click by the player:
+--  * the one above opens Blizzard's guild window (notes, message of the day, guild info);
+--  * "action" runs Blizzard's own secure guild slash commands (/gpromote, /gdemote, /gremove, /gleader, /gquit,
+--    /gdisband: Blizzard_ChatFrameBase SlashCommands.lua), the same as typing them.
+-- Our buttons can't hold them, and the client won't anchor protected frames to ours, so on hover the secure button
+-- goes onto UIParent exactly over ours and takes the click. In combat it can't move, so our button's own click says so.
+local action = CreateFrame("Button", "PerpetuaGuildAction", UIParent, "SecureActionButtonTemplate")
+action:RegisterForClicks("AnyUp")
+action:SetAttribute("type", "macro")
+action:Hide()
+
+local hovering, hoverSecure
+local function float(secure, target)
+  if InCombatLockdown() then return end
   -- Protected frames can't be anchored to ours (the client refuses), so it goes on UIParent at the same screen spot.
   local left, bottom, w, h = target:GetLeft(), target:GetBottom(), target:GetWidth(), target:GetHeight()
   if not (left and bottom and w and h) then return end
   local k = target:GetEffectiveScale() / UIParent:GetEffectiveScale()
-  hovering = target
-  blizzard:ClearAllPoints()
-  blizzard:SetPoint("BOTTOMLEFT", UIParent, "BOTTOMLEFT", left * k, bottom * k)
-  blizzard:SetSize(w * k, h * k)
-  blizzard:SetFrameStrata(target:GetFrameStrata())
-  blizzard:SetFrameLevel(target:GetFrameLevel() + 10)
-  blizzard:Show()
+  hovering, hoverSecure = target, secure
+  secure:ClearAllPoints()
+  secure:SetPoint("BOTTOMLEFT", UIParent, "BOTTOMLEFT", left * k, bottom * k)
+  secure:SetSize(w * k, h * k)
+  secure:SetFrameStrata(target:GetFrameStrata())
+  secure:SetFrameLevel(target:GetFrameLevel() + 10)
+  secure:Show()
 end
-blizzard:SetScript("OnEnter", function(self)
-  if not hovering then return end
+local function onEnter(self)
+  if not hovering or not hovering.secureTitle then return end
   try(hovering.LockHighlight, hovering)
   GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-  GameTooltip:SetText(hovering.blizzardTitle or "Blizzard's guild window", 0.83, 0.69, 0.22)
-  GameTooltip:AddLine(hovering.blizzardTip or "Opens Blizzard's guild window.", 1, 1, 1, true)
+  GameTooltip:SetText(hovering.secureTitle, 0.83, 0.69, 0.22)
+  if hovering.secureTip then GameTooltip:AddLine(hovering.secureTip, 1, 1, 1, true) end
   GameTooltip:Show()
-end)
-blizzard:SetScript("OnLeave", function(self)
+end
+local function onLeave(self)
   if hovering then try(hovering.UnlockHighlight, hovering) end
   GameTooltip:Hide()
-  hovering = nil
+  hovering, hoverSecure = nil, nil
   if not InCombatLockdown() then self:Hide(); self:ClearAllPoints() end
-end)
+end
+for _, b in ipairs({ blizzard, action }) do
+  b:SetScript("OnEnter", onEnter)
+  b:SetScript("OnLeave", onLeave)
+end
 -- The Perpetua window steps aside so Blizzard's has the screen.
-blizzard:SetScript("PreClick", function() if hovering and PerpetuaFrame then PerpetuaFrame:Hide() end end)
+blizzard:SetScript("PreClick", function() if hoverSecure == blizzard and PerpetuaFrame then PerpetuaFrame:Hide() end end)
+-- After a guild command: whatever our button wants to do next (close a dialog, refresh the roster).
+action:SetScript("PostClick", function(self)
+  local target = hovering
+  if target and target.secureAfter then target.secureAfter() end
+  if not InCombatLockdown() then onLeave(self) end
+end)
+
+local function inCombatNote(what)
+  print("|cffd4af37Perpetua|r: " .. what .. " only works out of combat (the game hands it to Blizzard's UI, which won't move in combat).")
+end
 
 function ns.opensBlizzardGuild(button, title, tip)
-  button.blizzardTitle, button.blizzardTip = title, tip
-  button:HookScript("OnEnter", function(self) float(self) end)
-  -- Only reached when the secure button wasn't over it (in combat, or no guild button on this client).
-  button:HookScript("OnClick", function()
-    print("|cffd4af37Perpetua|r: Blizzard's guild window can only be opened from here out of combat. "
-      .. "Shift + your guild key (J) opens it any time.")
+  button.secureTitle, button.secureTip = title, tip
+  button:HookScript("OnEnter", function(self) if GuildMicroButton then float(blizzard, self) end end)
+  -- Only reached when the secure button wasn't over it.
+  button:HookScript("OnClick", function() inCombatNote("Opening Blizzard's guild window from here") end)
+end
+
+-- Our button runs a guild slash command through the secure button. command() returns the macro text, or nil when
+-- there's nothing to do (then our button keeps the click); after() runs once it's done.
+function ns.secureGuildCommand(button, command, title, tip, after)
+  button.secureTitle, button.secureTip, button.secureAfter = title, tip, after
+  button:HookScript("OnEnter", function(self)
+    local text = command()
+    if not text then return end
+    action:SetAttribute("macrotext", text)
+    float(action, self)
   end)
+  button:HookScript("OnClick", function() if command() then inCombatNote("That") end end)
+end
+
+-- Blizzard's slash command for a guild action, as this client spells it.
+local SLASH = { promote = "PROMOTE", demote = "DEMOTE", remove = "UNINVITE", leader = "LEADER", leave = "LEAVE", disband = "DISBAND" }
+local FALLBACK = { promote = "/gpromote", demote = "/gdemote", remove = "/gremove", leader = "/gleader", leave = "/gquit", disband = "/gdisband" }
+function ns.guildSlash(kind, name)
+  local cmd = _G["SLASH_GUILD_" .. SLASH[kind] .. "1"]
+  if type(cmd) ~= "string" or not cmd:match("^/%S+$") then cmd = FALLBACK[kind] end
+  return name and (cmd .. " " .. name) or cmd
 end
 
 local overlay -- over GuildMicroButton

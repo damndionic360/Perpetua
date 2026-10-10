@@ -94,20 +94,21 @@ function A.whisper(m)
 end
 function A.groupInvite(m) act("invite " .. m.name .. " to your group", C_PartyInfo and C_PartyInfo.InviteUnit or InviteUnit, m.full) end
 local function rankName(order) return try(GuildControlGetRankName, order) or ("rank " .. order) end
--- One step up or down (dir -1 = promote, +1 = demote). The roster update redraws the panel with the new rank.
-function A.step(m, dir)
-  local order = m.rankOrder + dir
-  if dir < 0 and m.guid and try(C_GuildInfo.IsGuildRankAssignmentAllowed, m.guid, order) == false then
-    say(rankName(order) .. " needs an authenticator on " .. m.name .. "'s account.") return
-  end
-  act((dir < 0 and "promote " or "demote ") .. m.name, dir < 0 and C_GuildInfo.Promote or C_GuildInfo.Demote, m.full)
-  C_Timer.After(0.5, function() try(C_GuildInfo.GuildRoster) end)
+-- Promote / demote / remove / make leader / leave / disband run Blizzard's secure slash commands from a real click
+-- (GuildTakeover.lua ns.secureGuildCommand), since the game blocks addons calling them. The roster update redraws.
+local function refreshSoon() C_Timer.After(0.6, function() try(C_GuildInfo.GuildRoster) end) end
+-- The command for one step up (dir -1) or down (+1), or nil if not allowed.
+function A.stepCommand(m, dir)
+  local r = m and rights(m)
+  if not r or not (dir < 0 and r.promote or dir > 0 and r.demote) then return nil end
+  if dir < 0 and m.guid and try(C_GuildInfo.IsGuildRankAssignmentAllowed, m.guid, m.rankOrder - 1) == false then return nil end
+  return ns.guildSlash(dir < 0 and "promote" or "demote", m.full)
 end
 function A.remove(m)
   T.dialog({
     title = "Remove from guild", accept = "Remove",
     text = "Remove " .. m.name .. " from the guild?",
-    onAccept = function() act("remove " .. m.name, C_GuildInfo.Uninvite, m.full) end,
+    command = function() return ns.guildSlash("remove", m.full) end,
   })
 end
 -- Blizzard's Guild Control: rank names and permissions, adding and removing ranks, guild bank tabs.
@@ -121,7 +122,7 @@ function A.leader(m)
   T.dialog({
     title = "Make guild leader", accept = "Make leader",
     text = "Make " .. m.name .. " the Guild Master? You'll step down to the rank below.",
-    onAccept = function() act("make " .. m.name .. " guild leader", C_GuildInfo.SetLeader, m.full) end,
+    command = function() return ns.guildSlash("leader", m.full) end,
   })
 end
 function A.invite()
@@ -140,7 +141,7 @@ function A.leave()
     title = "Leave guild", accept = "Leave",
     text = leader and "You're the Guild Master: make someone else leader first, or disband the guild."
       or ("Leave <" .. safe(ns.guildName() or "") .. ">?"),
-    onAccept = not leader and function() act("leave the guild", C_GuildInfo.Leave) end or nil,
+    command = not leader and function() return ns.guildSlash("leave") end or nil,
   })
 end
 function A.disband()
@@ -148,7 +149,7 @@ function A.disband()
     title = "Disband guild", accept = "Disband",
     text = "Disband <" .. safe(ns.guildName() or "") .. ">? Everyone is removed and the guild is gone for good.\n\nType DISBAND to confirm.",
     input = { maxLetters = 7 },
-    onAccept = function(text) if (text or ""):upper() == "DISBAND" then act("disband the guild", C_GuildInfo.Disband) end end,
+    command = function(text) return (text or ""):upper() == "DISBAND" and ns.guildSlash("disband") or nil end,
   })
 end
 ns.guildActions = A
@@ -168,8 +169,8 @@ local function memberMenu(owner, m)
     if ns.players()[m.name] then
       root:CreateButton("View profile", function() ns.selected = m.name; ns.showTab("Character") end)
     end
-    if r.promote then root:CreateButton("Promote to " .. rankName(m.rankOrder - 1), function() A.step(m, -1) end) end
-    if r.demote then root:CreateButton("Demote to " .. rankName(m.rankOrder + 1), function() A.step(m, 1) end) end
+    -- Rank changes need a real click on a button (the game's rule), so the menu opens the member panel for them.
+    if r.promote or r.demote then root:CreateButton("Change rank…", function() R.selected = m.guid; ns.refreshUI(true) end) end
     if r.leader then root:CreateButton("Make guild leader", function() A.leader(m) end) end
     if r.remove then root:CreateButton(color(T.HEX.danger, "Remove from guild"), function() A.remove(m) end) end
     if m.isSelf then root:CreateButton(color(T.HEX.danger, "Leave guild"), function() A.leave() end) end
@@ -232,13 +233,15 @@ local function buildPanel(parent)
   p.buttons = {
     whisper = T.button(p, "Whisper", 108, function() A.whisper(R.member) end),
     group = T.button(p, "Invite", 108, function() A.groupInvite(R.member) end, "tab"),
-    promote = T.button(p, "Promote", 108, function() if R.member then A.step(R.member, -1) end end, "tab"),
-    demote = T.button(p, "Demote", 108, function() if R.member then A.step(R.member, 1) end end, "tab"),
+    promote = T.button(p, "Promote", 108, function() end, "tab"),
+    demote = T.button(p, "Demote", 108, function() end, "tab"),
     profile = T.button(p, "Profile", 108, function() ns.selected = R.member.name; ns.showTab("Character") end, "tab"),
     leader = T.button(p, "Make leader", 108, function() A.leader(R.member) end, "tab"),
     remove = T.button(p, "Remove", 108, function() A.remove(R.member) end, "tab"),
     leave = T.button(p, "Leave guild", 108, function() A.leave() end, "tab"),
   }
+  ns.secureGuildCommand(p.buttons.promote, function() return A.stepCommand(R.member, -1) end, "Promote", nil, refreshSoon)
+  ns.secureGuildCommand(p.buttons.demote, function() return A.stepCommand(R.member, 1) end, "Demote", nil, refreshSoon)
   for _, k in ipairs({ "remove", "leave" }) do
     local b = p.buttons[k]
     b.edge:SetColor({ 1, 0.54, 0.48 }, 0.55)

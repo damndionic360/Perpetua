@@ -423,7 +423,9 @@ end
 
 -- A small modal dialog in the window's style, used instead of Blizzard's StaticPopups (which addon code would
 -- taint). opts: title, text, accept (button label), input = { text, maxLetters, multiline, height },
--- onAccept(value) (value is the input's text when there is one). Only one is open at a time.
+-- onAccept(value) (value is the input's text when there is one), or command(value) for a guild action the game
+-- only allows through Blizzard's secure slash commands: it returns the macro text (e.g. "/gremove Name"), or nil
+-- while the input isn't right, and the OK button runs it with a secure click (GuildTakeover.lua). Only one is open at a time.
 local dialog
 function T.dialog(opts)
   if not dialog then
@@ -461,6 +463,7 @@ function T.dialog(opts)
     edit:SetScript("OnEscapePressed", function() f:Hide() end)
     edit:SetScript("OnEnterPressed", function(self)
       if self:IsMultiLine() and not IsShiftKeyDown() then self:Insert("\n") return end
+      if f.command then return end -- a guild action needs a real click on the button
       f.ok:Click()
     end)
     edit:SetScript("OnTextChanged", function(self)
@@ -471,6 +474,7 @@ function T.dialog(opts)
     f.count = T.text(f, "muted", "RIGHT")
     f.count:SetPoint("TOPRIGHT", holder, "BOTTOMRIGHT", 0, -4)
     f.ok = T.button(f, "OK", 110, function()
+      if f.command then return end -- guild actions run through the secure button over this one (or not, in combat)
       local value = f.holder:IsShown() and (f.edit:GetText() or "") or nil
       local cb = f.onAccept
       f:Hide()
@@ -479,11 +483,18 @@ function T.dialog(opts)
     f.cancel = T.button(f, "Cancel", 110, function() f:Hide() end, "tab")
     f.cancel:SetPoint("BOTTOMRIGHT", -22, 18)
     f.ok:SetPoint("RIGHT", f.cancel, "LEFT", -10, 0)
-    f:SetScript("OnHide", function() f.onAccept = nil; f.edit:ClearFocus() end)
+    f:SetScript("OnHide", function() f.onAccept, f.command = nil, nil; f.edit:ClearFocus() end)
     dialog = f
   end
   local f = dialog
   f.onAccept = opts.onAccept
+  f.command = opts.command
+  if f.command and not f.secured and ns.secureGuildCommand then
+    f.secured = true
+    ns.secureGuildCommand(f.ok, function()
+      return f:IsShown() and f.command and f.command(f.holder:IsShown() and (f.edit:GetText() or "") or nil) or nil
+    end, nil, nil, function() f:Hide(); if C_GuildInfo and C_GuildInfo.GuildRoster then C_Timer.After(0.6, function() pcall(C_GuildInfo.GuildRoster) end) end end)
+  end
   f.title:SetText((opts.title or ""):upper())
   f.body:SetText(opts.text or "")
   f.ok.label:SetText((opts.accept or "OK"):upper())
